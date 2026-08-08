@@ -43,16 +43,16 @@ public class OutboxLagRule implements RemediationRule {
 
     @Override
     public RemediationAction actionFor(SystemState state) {
-        String worstService = state.outboxLagSeconds().entrySet().stream()
+        String mostLaggingService = state.outboxLagSeconds().entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
                 .orElse("unknown");
 
         return new RemediationAction(
-                "Outbox publish lag on " + worstService + " exceeds " + LAG_THRESHOLD_SECONDS
+                "Outbox publish lag on " + mostLaggingService + " exceeds " + LAG_THRESHOLD_SECONDS
                         + "s with no open circuit breaker - likely producer backpressure.",
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
-                worstService,
+                mostLaggingService,
                 RemediationAction.Source.RULE_ENGINE
         );
     }
