@@ -40,11 +40,13 @@ public record RemediationProperties(
     }
 
     /**
-     * Per-service admin base URL to call to change a live retry budget. There is
-     * no standard Resilience4j actuator endpoint for this (its actuator
-     * endpoints are read-only) - each target service is expected to expose
-     * {@code POST {adminBaseUrl}/internal/resilience/retry-budget} with a JSON
-     * body {@code {"clientName": "...", "maxAttempts": N}}. Keyed by the same
+     * Per-service admin base URL (the target's management port, e.g.
+     * {@code http://localhost:8081} for oms-main) to call to change a live
+     * retry budget. There is no standard Resilience4j actuator endpoint for
+     * this (its actuator endpoints are read-only) - each target service is
+     * expected to expose a custom actuator endpoint at
+     * {@code POST {adminBaseUrl}/actuator/retrybudget} with a JSON body
+     * {@code {"clientName": "...", "maxAttempts": N}}. Keyed by the same
      * targetService name RemediationTools receives.
      */
     public record RetryBudget(Map<String, String> adminBaseUrl) {

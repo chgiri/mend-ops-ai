@@ -17,24 +17,39 @@ import java.util.Map;
  * CustomerClientImpl in oms-main, which builds its Retry/CircuitBreaker from
  * RetryRegistry/CircuitBreakerRegistry keyed by "customerClient"). So the
  * RetryRegistry this needs to reach lives in oms-main's process, same as
- * where CircuitBreakerPoller already reads circuit breaker state from.
- * Resilience4j's own actuator endpoints are read-only, so this expects
- * oms-main to expose a small admin endpoint of its own:
+ * where CircuitBreakerPoller already reads circuit breaker state from -
+ * both are actuator endpoints on oms-main's management port (8081 locally),
+ * not its main app port.
+ * <p>
+ * Resilience4j's own built-in actuator endpoints are read-only, so oms-main
+ * exposes a custom one as a genuine actuator {@code @Endpoint}/
+ * {@code @WriteOperation} (RetryBudgetEndpoint, id "retrybudget") rather
+ * than a plain REST controller - that's specifically what puts it on the
+ * management port instead of the main one, matching the network-isolation
+ * posture of the rest of actuator:
  * <pre>{@code
- * POST {adminBaseUrl}/internal/resilience/retry-budget
+ * POST {adminBaseUrl}/actuator/retrybudget
  * {"clientName": "productClient", "maxAttempts": 5}
  * }</pre>
  * configured per Resilience4j instance name under
  * {@code mendops.remediation.retry-budget.admin-base-url.<instanceName>} -
- * in practice both instance names point at the same oms-main host. If
- * oms-main doesn't implement that contract yet, this fails loudly rather
- * than silently pretending the change took effect.
+ * in practice both instance names point at the same oms-main management-port
+ * host, e.g. {@code http://localhost:8081}. If oms-main doesn't expose that
+ * endpoint yet (or hasn't listed "retrybudget" under
+ * {@code management.endpoints.web.exposure.include}), this fails loudly
+ * rather than silently pretending the change took effect.
+ * <p>
+ * NOTE: this endpoint requires a valid Bearer token on oms-main's side
+ * (it's behind Spring Security's default anyRequest().authenticated() rule,
+ * not in the permitAll list like the read-only actuator paths) - this
+ * client does not attach one yet, so calls will currently fail with 401
+ * until service-to-service auth is added here.
  */
 @Component
 public class RetryBudgetAdminClient {
 
     private static final Logger log = LoggerFactory.getLogger(RetryBudgetAdminClient.class);
-    private static final String ADMIN_PATH = "/internal/resilience/retry-budget";
+    private static final String ADMIN_PATH = "/actuator/retrybudget";
 
     private final Map<String, String> adminBaseUrlByService;
     private final RestClient restClient;
