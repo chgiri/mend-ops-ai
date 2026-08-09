@@ -9,7 +9,7 @@ only when no rule matches.
 ## Architecture (v1)
 
 ```
-SystemState snapshot
+SystemStatePoller (scheduled)
         |
         v
    RuleEngine.evaluate()  -- first match wins, tracked in coverageRatio()
@@ -21,40 +21,79 @@ SystemState snapshot
    EscalationService.diagnoseAndAct()  -- Spring AI ChatClient + @Tool calls
         |
         v
-   RemediationTools (replayDlqBatch / adjustRetryBudget / pageOncall)
+   RemediationTools
+        |
+   pageOncall -----------------------------------> executes immediately
+        |
+   replayDlqBatch / adjustRetryBudget --> ApprovalGate.propose()
+        |                                      |
+        |                                 PendingApproval (queued)
+        |                                      |
+        |                            human calls /approvals/{id}/approve
+        |                                      |
+        +--------------------------------> real action executes
 ```
 
 - `model/` - `SystemState` (input snapshot) and `RemediationAction` (output).
 - `rules/` - `RemediationRule` interface, `RuleEngine` (plain typed policy
-  list, not Drools - see project notes on why), and two example rules under
-  `rules/impl/` covering known OMS patterns (ProductClient circuit open,
-  outbox lag without an open breaker).
+  list, not Drools - see project notes on why), and rules under `rules/impl/`:
+  `ProductServiceCircuitOpenRule`, `OutboxLagRule` (known anomaly patterns),
+  and `HealthyStateRule` (catches the steady/nothing-wrong state so
+  continuous polling doesn't escalate to the LLM every cycle).
+- `telemetry/` - the real ingestion layer, replacing the original demo-only
+  `SystemState` input: `CircuitBreakerPoller` (oms-main's
+  `/actuator/circuitbreakers`), `OutboxLagPoller` (JDBC against each
+  service's own outbox table, schema-qualified per source where needed),
+  `DlqDepthPoller` (Kafka `AdminClient`, long-lived, not recreated per poll),
+  `OutboxDataSourceRegistry` (one small connection pool per outbox source),
+  `OmsTelemetryProperties` (typed config), and `SystemStatePoller` (the
+  `@Scheduled` job tying the three pollers into `AgentOrchestrator`).
 - `agent/` - `AgentOrchestrator` (the cascade: rule engine first, LLM
-  fallback), `EscalationService` (Spring AI `ChatClient` wiring), and
-  `RemediationTools` (the real, scoped actions the LLM can invoke via tool
-  calling).
-- `controller/` - demo REST endpoints to drive the agent manually before a
-  real telemetry poller exists.
+  fallback), `EscalationService` (Spring AI `ChatClient` wiring),
+  `RemediationTools` (the actions the LLM can invoke via tool calling), and
+  the approval gate: `ApprovalGate` (in-memory pending-approval store) and
+  `PendingApproval` (a proposed risky action + the real execution captured
+  as a `Callable`, only run on approval).
+- `controller/` - `AgentController` (demo endpoints + coverage metric) and
+  `ApprovalController` (list/approve/reject pending approvals).
 
 All source lives under `com.giri.ai.mendops`.
 
+## How the approval gate works
+
+`replayDlqBatch` and `adjustRetryBudget` no longer execute when the LLM
+calls them - they call `ApprovalGate.propose(...)`, which stores a
+`PendingApproval` and returns only an id/acknowledgement to the model. The
+real Kafka/Resilience4j call is captured as a `Callable` at proposal time
+and only runs when a human calls the approve endpoint. `pageOncall` is the
+one exception - it's a notification, not a destructive action, so it still
+executes immediately.
+
+```bash
+# See what's awaiting approval
+curl http://localhost:8095/api/v1/agent/approvals?pendingOnly=true
+
+# Approve one (this is when the real action actually runs)
+curl -X POST http://localhost:8095/api/v1/agent/approvals/<id>/approve
+
+# Reject one (no action taken, marked resolved)
+curl -X POST http://localhost:8095/api/v1/agent/approvals/<id>/reject
+```
+
+v1 stores approvals in memory only (lost on restart) - fine for local/demo
+use. If this needs to survive a restart or be visible across instances,
+that's the point to add JPA persistence.
+
 ## Not yet built (intentionally out of v1 scope)
 
-- **Real telemetry ingestion.** `SystemState` is currently supplied over
-  HTTP for demo purposes. Next step: a scheduled poller reading Resilience4j
-  `CircuitBreakerRegistry`, the outbox table's lag, and Kafka DLQ depth from
-  the actual OMS services.
-- **Human-approval gate in front of `RemediationTools`.** `EscalationService`
-  currently lets the model call any tool directly. Before this touches
-  anything beyond local/demo, add an approval step for every `ActionType`
-  except `PAGE_ONCALL`.
 - **Rule-promotion flow.** The LLM authoring a new `RemediationRule` from a
   resolved unknown incident, queued for human review, then added to
-  `RuleEngine`'s rule list. This is the "gets cheaper over time" story - next
-  major milestone after the approval gate.
-- **Real tool implementations.** `RemediationTools` methods currently log and
-  return a string instead of calling Kafka admin / Resilience4j / a paging
-  webhook.
+  `RuleEngine`'s rule list. This is the "gets cheaper over time" story - the
+  next major milestone now that telemetry + the approval gate are both done.
+- **Real tool implementations.** `RemediationTools`' captured `Callable`s
+  still log and return a string instead of calling a real Kafka admin
+  client / Resilience4j `RetryRegistry` / a paging webhook.
+- **Persistent approval/audit history.** Currently in-memory only.
 
 ## Running locally
 
@@ -63,7 +102,11 @@ export GEMINI_API_KEY=your-key-here
 mvn spring-boot:run
 ```
 
-Demo endpoints:
+Real telemetry polling starts automatically on a schedule
+(`mendops.telemetry.poll-interval-ms`, default 30s) once
+`mendops.telemetry.*` properties are configured against your running OMS
+stack. Demo endpoints remain useful for forcing a specific scenario on
+demand without waiting for a real failure:
 
 ```bash
 # Known pattern - resolved by the rule engine, no LLM call
@@ -80,7 +123,8 @@ curl http://localhost:8095/api/v1/agent/coverage
 
 - Java 21
 - Spring Boot 4.1.0 (required by Spring AI 2.0.0 - built on Spring
-  Framework 7 / Jackson 3)
+  Framework 7 / Jackson 3; note Jackson 3's packages moved from
+  `com.fasterxml.jackson.*` to `tools.jackson.*`, annotations excepted)
 - Spring AI 2.0.0, `spring-ai-starter-model-google-genai` (Gemini Developer
   API via `GEMINI_API_KEY`; model currently set to `gemini-3.5-flash` in
   `application.properties`)
