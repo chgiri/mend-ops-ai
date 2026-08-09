@@ -1,0 +1,11 @@
+# For local dev when oms-main is run from IntelliJ on the host instead of as
+# a container - mirrors the same pattern already used for product-service /
+# customer-service's IntelliJ-on-host override. Kafka and Postgres are
+# assumed to still be running in Docker (unaffected), so only the actuator
+# URL - which points at oms-main's own JVM - needs to change.
+services:
+  mend-ops-ai:
+    environment:
+      MENDOPS_TELEMETRY_CIRCUITBREAKERS_ACTUATORBASEURL: http://host.docker.internal:8081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

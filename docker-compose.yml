@@ -1,0 +1,52 @@
+services:
+  mend-ops-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mend-ops-ai
+    ports:
+      - "8095:8095"
+    environment:
+      # --- LLM ---
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+
+      # --- Circuit breaker polling (scalar properties - safe to set via relaxed-binding env vars) ---
+      MENDOPS_TELEMETRY_CIRCUITBREAKERS_ACTUATORBASEURL: http://app:8081
+      MENDOPS_TELEMETRY_CIRCUITBREAKERS_NAMES: productClient,customerClient
+
+      # --- Kafka DLQ polling ---
+      MENDOPS_TELEMETRY_KAFKA_BOOTSTRAPSERVERS: kafka:9092
+      MENDOPS_TELEMETRY_KAFKA_DLQTOPICS: oms.customer.events.DLT,oms.product.events.DLT
+
+      MENDOPS_TELEMETRY_POLLINTERVALMS: 15000
+
+      # --- Outbox DB credentials ---
+      # NOTE: mendops.telemetry.outbox-sources is a Map keyed by service name
+      # (oms-main / product-service / customer-service). Relaxed env-var
+      # binding is unreliable for map keys containing hyphens, so those keys
+      # + jdbc-url must stay defined directly in application.properties -
+      # only the leaf username/password values are read from these env vars
+      # via ${...} placeholders inside that file. See the properties snippet
+      # from earlier for the exact ${OMS_DB_READONLY_USER}-style references
+      # these are meant to satisfy.
+      OMS_DB_READONLY_USER: ${OMS_DB_READONLY_USER}
+      OMS_DB_READONLY_PASSWORD: ${OMS_DB_READONLY_PASSWORD}
+      PRODUCT_DB_READONLY_USER: ${PRODUCT_DB_READONLY_USER}
+      PRODUCT_DB_READONLY_PASSWORD: ${PRODUCT_DB_READONLY_PASSWORD}
+      CUSTOMER_DB_READONLY_USER: ${CUSTOMER_DB_READONLY_USER}
+      CUSTOMER_DB_READONLY_PASSWORD: ${CUSTOMER_DB_READONLY_PASSWORD}
+    env_file:
+      - .env
+    networks:
+      - oms-network
+    restart: unless-stopped
+
+networks:
+  oms-network:
+    external: true
+    # Must match the network name actually created by oms-main's own
+    # docker-compose.yml (check with `docker network ls` - typically
+    # <oms-main-directory-name>_oms-network unless a top-level `name:` was
+    # set there). This compose file intentionally does not start oms-main,
+    # product-service, customer-service, or Kafka - it only attaches to
+    # their existing network, so bring the OMS stack up first.

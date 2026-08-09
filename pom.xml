@@ -49,6 +49,23 @@
             <artifactId>spring-ai-starter-model-google-genai</artifactId>
         </dependency>
 
+        <!-- Telemetry polling: JDBC access to each service's outbox table -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Telemetry polling: AdminClient for DLQ topic depth (no consumer group side effects) -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
