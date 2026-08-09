@@ -6,8 +6,9 @@ import com.giri.ai.mendops.rules.RemediationRule;
 import org.springframework.stereotype.Component;
 
 /**
- * Catches the steady/nothing-wrong state: every circuit breaker CLOSED and
- * no outbox lag above OutboxLagRule's threshold.
+ * Catches the steady/nothing-wrong state: every circuit breaker CLOSED, no
+ * outbox lag above OutboxLagRule's threshold, and no DLQ backlog above
+ * DLQ_DEPTH_THRESHOLD.
  * <p>
  * Exists specifically because SystemStatePoller now runs continuously on a
  * schedule (unlike the original on-demand demo endpoints) - without this
@@ -24,11 +25,18 @@ import org.springframework.stereotype.Component;
  * healthy by this rule). Whenever this rule matches, no anomaly rule would
  * have matched either, so its position in the rule list relative to the
  * others doesn't matter.
+ * <p>
+ * DLQ depth check added for the same reason: without it, "breakers CLOSED,
+ * lag fine, but DLQ depth climbing" - the exact "outage is over, backlog
+ * remains" pattern replayDlqBatch exists for - was being wrongly classified
+ * healthy and never reached EscalationService at all, since no other rule
+ * in this project checks DLQ depth either.
  */
 @Component
 public class HealthyStateRule implements RemediationRule {
 
     private static final long LAG_THRESHOLD_SECONDS = 120;
+    private static final long DLQ_DEPTH_THRESHOLD = 50;
 
     @Override
     public String id() {
@@ -37,7 +45,8 @@ public class HealthyStateRule implements RemediationRule {
 
     @Override
     public String description() {
-        return "Every circuit breaker is CLOSED and no outbox lag exceeds threshold - nothing to do.";
+        return "Every circuit breaker is CLOSED, no outbox lag exceeds threshold, and no DLQ "
+                + "backlog exceeds threshold - nothing to do.";
     }
 
     @Override
@@ -48,7 +57,10 @@ public class HealthyStateRule implements RemediationRule {
         boolean anyLagHigh = state.outboxLagSeconds().values().stream()
                 .anyMatch(lag -> lag != null && lag > LAG_THRESHOLD_SECONDS);
 
-        return allBreakersClosed && !anyLagHigh;
+        boolean anyDlqDeep = state.dlqDepth().values().stream()
+                .anyMatch(depth -> depth != null && depth > DLQ_DEPTH_THRESHOLD);
+
+        return allBreakersClosed && !anyLagHigh && !anyDlqDeep;
     }
 
     @Override

@@ -33,7 +33,14 @@ public class EscalationService {
             Reason about which services are affected and how the failure likely propagates
             given the known call graph (order creation depends on ProductClient and
             CustomerClient calls; outbox publishers feed Kafka topics consumed by other
-            services). Produce a concise diagnosis in plain English, then decide whether an
+            services). A CLOSED breaker for a service means calls to it are succeeding right
+            now - treat that as a real recovery signal, not just an absence of alarm; a
+            backlog (DLQ depth, outbox lag) alongside all-CLOSED breakers usually means the
+            underlying cause has already resolved and what's left is cleanup, which is exactly
+            what replayDlqBatch/adjustRetryBudget are for. Reserve pageOncall for breakers that
+            are OPEN or HALF_OPEN (the failure is still live or still being probed) or for
+            genuinely ambiguous signals - don't default to it just because a human could also
+            handle it. Produce a concise diagnosis in plain English, then decide whether an
             automated remediation is appropriate or whether this should be escalated to a
             human. Prefer paging a human when you are not confident, when the situation could
             involve data loss, or when the correct action is ambiguous.

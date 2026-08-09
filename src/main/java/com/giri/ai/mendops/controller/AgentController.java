@@ -55,6 +55,26 @@ public class AgentController {
         return orchestrator.handle(state);
     }
 
+    /**
+     * Convenience endpoint: breakers CLOSED and lag fine (the outage is over), but a DLQ
+     * backlog remains - the pattern replayDlqBatch exists for. No rule matches this (see
+     * HealthyStateRule's DLQ depth check and OutboxLagRule's lag-only scope), so it forces
+     * LLM escalation with a scenario that should read as "safe to replay" rather than
+     * "page someone" - unlike demo/unknown-pattern, which deliberately includes a HALF_OPEN
+     * breaker (a live, unresolved signal) and so tends to escalate to pageOncall instead.
+     */
+    @PostMapping("/demo/dlq-backlog-recovered")
+    public String demoDlqBacklogRecovered() {
+        SystemState state = new SystemState(
+                Instant.now(),
+                Map.of("customerClient", SystemState.CircuitBreakerState.CLOSED,
+                        "productClient", SystemState.CircuitBreakerState.CLOSED),
+                Map.of("customer-service", 5L),
+                Map.of("oms.customer.events.DLT", 380L)
+        );
+        return orchestrator.handle(state);
+    }
+
     @GetMapping("/coverage")
     public Map<String, Object> coverage() {
         return Map.of(

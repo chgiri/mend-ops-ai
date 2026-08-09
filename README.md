@@ -141,12 +141,22 @@ demand without waiting for a real failure:
 # Known pattern - resolved by the rule engine, no LLM call
 curl -X POST http://localhost:8095/api/v1/agent/demo/product-circuit-open
 
-# Unusual combination - no rule matches, escalates to Gemini
+# Unusual combination, HALF_OPEN breaker (still-live signal) - typically escalates to pageOncall
 curl -X POST http://localhost:8095/api/v1/agent/demo/unknown-pattern
+
+# Breakers CLOSED/lag fine but a DLQ backlog remains - typically escalates to replayDlqBatch
+curl -X POST http://localhost:8095/api/v1/agent/demo/dlq-backlog-recovered
 
 # Coverage metric (rule-engine hit rate vs. LLM escalation rate)
 curl http://localhost:8095/api/v1/agent/coverage
 ```
+
+Which action the LLM picks is a model decision, not guaranteed - but breaker state is
+the strongest signal for it: HALF_OPEN/OPEN reads as a live, unresolved incident (favors
+pageOncall), while all-CLOSED breakers with a lingering DLQ backlog reads as "already
+recovered, just needs cleanup" (favors replayDlqBatch). `HealthyStateRule` also checks DLQ
+depth now, not just breaker state and lag - without that, an all-CLOSED-breakers scenario
+with a growing backlog was being wrongly classified healthy and never reached the LLM at all.
 
 ## Stack
 
