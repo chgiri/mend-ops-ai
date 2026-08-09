@@ -84,15 +84,44 @@ v1 stores approvals in memory only (lost on restart) - fine for local/demo
 use. If this needs to survive a restart or be visible across instances,
 that's the point to add JPA persistence.
 
+## Real tool implementations
+
+`RemediationTools`' captured `Callable`s call real integrations, in
+`remediation/` (`RemediationProperties`, `DlqReplayService`,
+`RetryBudgetAdminClient`, `PagingNotifier`):
+
+- **`replayDlqBatch`** - a dedicated Kafka consumer group
+  (`mendops.remediation.dlq.consumer-group-id`) reads up to `count` messages
+  from the DLQ topic and republishes them (key/value/headers preserved) to
+  the source topic. Source topic is derived by stripping a `.DLT` suffix
+  (Spring Kafka's default dead-letter naming convention) unless overridden
+  per-topic via `mendops.remediation.dlq.source-topic-override`. Falls back
+  to `mendops.telemetry.kafka.bootstrap-servers` if
+  `mendops.remediation.dlq.bootstrap-servers` is unset.
+- **`adjustRetryBudget`** - `productClient`/`customerClient` are Resilience4j
+  instance names for oms-main's own outbound clients (see e.g.
+  `CustomerClientImpl`) - product-service/customer-service don't implement
+  Resilience4j themselves. So this calls an admin endpoint on **oms-main**
+  (`POST {admin-base-url}/internal/resilience/retry-budget`, body
+  `{"clientName": "...", "maxAttempts": N}`), same host as
+  `mendops.telemetry.circuit-breakers.actuator-base-url`. Configured per
+  Resilience4j instance name (not per downstream service) under
+  `mendops.remediation.retry-budget.admin-base-url.<instanceName>` - in
+  practice both `productClient` and `customerClient` point at the same
+  oms-main host. If oms-main doesn't expose that endpoint yet, the call
+  fails loudly rather than silently no-oping.
+- **`pageOncall`** - POSTs `{"text": "..."}` to a Slack-incoming-webhook-style
+  URL (`mendops.remediation.paging.webhook-url`). Since paging executes
+  immediately and isn't approval-gated, a missing/failing webhook logs at
+  WARN/ERROR instead of throwing, so it never blocks the one action path
+  that's supposed to always work.
+
 ## Not yet built (intentionally out of v1 scope)
 
 - **Rule-promotion flow.** The LLM authoring a new `RemediationRule` from a
   resolved unknown incident, queued for human review, then added to
   `RuleEngine`'s rule list. This is the "gets cheaper over time" story - the
   next major milestone now that telemetry + the approval gate are both done.
-- **Real tool implementations.** `RemediationTools`' captured `Callable`s
-  still log and return a string instead of calling a real Kafka admin
-  client / Resilience4j `RetryRegistry` / a paging webhook.
 - **Persistent approval/audit history.** Currently in-memory only.
 
 ## Running locally

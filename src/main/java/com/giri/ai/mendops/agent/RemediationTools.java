@@ -1,6 +1,9 @@
 package com.giri.ai.mendops.agent;
 
 import com.giri.ai.mendops.model.RemediationAction;
+import com.giri.ai.mendops.remediation.DlqReplayService;
+import com.giri.ai.mendops.remediation.PagingNotifier;
+import com.giri.ai.mendops.remediation.RetryBudgetAdminClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
@@ -14,16 +17,17 @@ import org.springframework.stereotype.Component;
  * <p>
  * replayDlqBatch and adjustRetryBudget are gated behind ApprovalGate: calling
  * them does NOT run the real action - it records a PendingApproval and
- * returns only an id/acknowledgement to the LLM. The real Kafka/Resilience4j
+ * returns only an id/acknowledgement to the LLM. The real Kafka/admin-endpoint
  * call only happens if a human approves it via ApprovalController. pageOncall
  * is NOT gated - paging is a notification, not a destructive action, so it
  * still executes immediately, matching the original guardrail design (every
  * ActionType except PAGE_ONCALL needs approval).
  * <p>
- * v1: logging stand-ins for the real integrations (Kafka admin client for
- * DLQ replay, Resilience4j registry for retry-budget tuning, a paging
- * webhook) - the TODOs below are unchanged by adding the approval gate,
- * they're just now wrapped inside the Callable passed to ApprovalGate.
+ * The real integrations live in the {@code remediation} package
+ * (DlqReplayService, RetryBudgetAdminClient, PagingNotifier) - this class
+ * stays a thin @Tool-annotated adapter over them so the LLM-facing surface
+ * (descriptions, ApprovalGate wiring) is easy to scan independently of the
+ * integration details.
  */
 @Component
 public class RemediationTools {
@@ -31,9 +35,16 @@ public class RemediationTools {
     private static final Logger log = LoggerFactory.getLogger(RemediationTools.class);
 
     private final ApprovalGate approvalGate;
+    private final DlqReplayService dlqReplayService;
+    private final RetryBudgetAdminClient retryBudgetAdminClient;
+    private final PagingNotifier pagingNotifier;
 
-    public RemediationTools(ApprovalGate approvalGate) {
+    public RemediationTools(ApprovalGate approvalGate, DlqReplayService dlqReplayService,
+                             RetryBudgetAdminClient retryBudgetAdminClient, PagingNotifier pagingNotifier) {
         this.approvalGate = approvalGate;
+        this.dlqReplayService = dlqReplayService;
+        this.retryBudgetAdminClient = retryBudgetAdminClient;
+        this.pagingNotifier = pagingNotifier;
     }
 
     @Tool(description = "Propose replaying a batch of messages from a dead-letter queue topic "
@@ -46,9 +57,10 @@ public class RemediationTools {
                 RemediationAction.ActionType.REPLAY_DLQ_BATCH,
                 description,
                 () -> {
-                    log.info("[TOOL:EXECUTED] replayDlqBatch topic={} count={}", topic, count);
-                    // TODO: wire to real Kafka admin client against the DLQ topic.
-                    return "Replayed " + count + " messages from " + topic;
+                    int replayed = dlqReplayService.replayBatch(topic, count);
+                    log.info("[TOOL:EXECUTED] replayDlqBatch topic={} requested={} replayed={}",
+                            topic, count, replayed);
+                    return "Replayed " + replayed + " of " + count + " requested messages from " + topic;
                 }
         );
         return "Proposed and awaiting human approval (approvalId=" + id + "). "
@@ -65,9 +77,9 @@ public class RemediationTools {
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
                 description,
                 () -> {
+                    retryBudgetAdminClient.adjust(serviceName, maxAttempts);
                     log.info("[TOOL:EXECUTED] adjustRetryBudget service={} maxAttempts={}",
                             serviceName, maxAttempts);
-                    // TODO: wire to a live Resilience4j RetryRegistry config update.
                     return "Retry budget for " + serviceName + " set to " + maxAttempts + " attempts";
                 }
         );
@@ -81,7 +93,7 @@ public class RemediationTools {
             + "auto-remediate.")
     public String pageOncall(String summary) {
         log.info("[TOOL] pageOncall summary={}", summary);
-        // TODO: wire to a real paging webhook (PagerDuty/Slack/etc).
+        pagingNotifier.page(summary);
         return "Paged on-call: " + summary;
     }
 }
