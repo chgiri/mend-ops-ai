@@ -28,12 +28,14 @@ public class ApprovalController {
             String description,
             PendingApproval.Status status,
             Instant resolvedAt,
-            String executionResult
+            String executionResult,
+            String failureReason
     ) {
         static ApprovalView of(PendingApproval approval) {
             return new ApprovalView(
                     approval.id(), approval.createdAt(), approval.actionType(), approval.description(),
-                    approval.status(), approval.resolvedAt(), approval.executionResult()
+                    approval.status(), approval.resolvedAt(), approval.executionResult(),
+                    approval.failureReason()
             );
         }
     }

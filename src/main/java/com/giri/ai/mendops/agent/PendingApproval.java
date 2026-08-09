@@ -11,15 +11,22 @@ import java.util.concurrent.Callable;
  * proposal time and only invoked by {@link ApprovalGate#approve} - nothing
  * about the real action happens until a human explicitly approves this.
  * <p>
- * Mutable by design (status/resolvedAt/executionResult change in place) so
- * ApprovalGate can hold a single instance per id rather than replacing map
- * entries - this class is not exposed directly over REST; see
+ * Mutable by design (status/resolvedAt/executionResult/failureReason change
+ * in place) so ApprovalGate can hold a single instance per id rather than
+ * replacing map entries - this class is not exposed directly over REST; see
  * ApprovalController's view DTO, since {@code execution} isn't serializable.
  */
 public class PendingApproval {
 
+    /**
+     * FAILED means execution was attempted and threw - distinct from PENDING
+     * (never attempted). FAILED is retryable: ApprovalGate.approve() allows
+     * calling approve() again on a FAILED approval, since the underlying
+     * cause (e.g. a transient Kafka blip, or an admin endpoint that wasn't
+     * deployed yet) may since be resolved. APPROVED/REJECTED are terminal.
+     */
     public enum Status {
-        PENDING, APPROVED, REJECTED
+        PENDING, APPROVED, REJECTED, FAILED
     }
 
     private final String id;
@@ -31,6 +38,7 @@ public class PendingApproval {
     private volatile Status status = Status.PENDING;
     private volatile Instant resolvedAt;
     private volatile String executionResult;
+    private volatile String failureReason;
 
     public PendingApproval(String id, RemediationAction.ActionType actionType, String description,
                             Callable<String> execution) {
@@ -49,11 +57,18 @@ public class PendingApproval {
         this.status = Status.APPROVED;
         this.resolvedAt = Instant.now();
         this.executionResult = result;
+        this.failureReason = null;
     }
 
     void markRejected() {
         this.status = Status.REJECTED;
         this.resolvedAt = Instant.now();
+    }
+
+    void markFailed(String reason) {
+        this.status = Status.FAILED;
+        this.resolvedAt = Instant.now();
+        this.failureReason = reason;
     }
 
     public String id() {
@@ -82,5 +97,9 @@ public class PendingApproval {
 
     public String executionResult() {
         return executionResult;
+    }
+
+    public String failureReason() {
+        return failureReason;
     }
 }
