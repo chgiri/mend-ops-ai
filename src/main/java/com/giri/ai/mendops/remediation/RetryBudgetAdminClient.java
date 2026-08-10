@@ -39,11 +39,11 @@ import java.util.Map;
  * {@code management.endpoints.web.exposure.include}), this fails loudly
  * rather than silently pretending the change took effect.
  * <p>
- * NOTE: this endpoint requires a valid Bearer token on oms-main's side
- * (it's behind Spring Security's default anyRequest().authenticated() rule,
- * not in the permitAll list like the read-only actuator paths) - this
- * client does not attach one yet, so calls will currently fail with 401
- * until service-to-service auth is added here.
+ * Authenticates as mend-ops-ai's SERVICE-role account via OmsAuthClient,
+ * attaching "Authorization: Bearer &lt;token&gt;" on every call - this
+ * endpoint is scoped to hasRole("SERVICE") on oms-main's side (not just
+ * anyRequest().authenticated()), so an unauthenticated or wrong-role call
+ * fails with 401/403 rather than silently succeeding.
  */
 @Component
 public class RetryBudgetAdminClient {
@@ -53,13 +53,15 @@ public class RetryBudgetAdminClient {
 
     private final Map<String, String> adminBaseUrlByService;
     private final RestClient restClient;
+    private final OmsAuthClient omsAuthClient;
 
-    public RetryBudgetAdminClient(RemediationProperties properties) {
+    public RetryBudgetAdminClient(RemediationProperties properties, OmsAuthClient omsAuthClient) {
         this.adminBaseUrlByService = (properties.retryBudget() == null
                 || properties.retryBudget().adminBaseUrl() == null)
                 ? Map.of()
                 : properties.retryBudget().adminBaseUrl();
         this.restClient = RestClient.create();
+        this.omsAuthClient = omsAuthClient;
     }
 
     public void adjust(String targetService, int maxAttempts) {
@@ -76,6 +78,7 @@ public class RetryBudgetAdminClient {
 
         restClient.post()
                 .uri(adminBaseUrl + ADMIN_PATH)
+                .header("Authorization", "Bearer " + omsAuthClient.getBearerToken())
                 .body(Map.of("clientName", targetService, "maxAttempts", maxAttempts))
                 .retrieve()
                 .toBodilessEntity();
