@@ -129,9 +129,13 @@ what makes this genuinely crash-safe, not just an audit log:
 
 - Every propose/approve/reject/fail is written through to
   `ApprovalAuditRepository` (JPA, `approval_audit` +
-  `approval_audit_params` tables in mend-ops-ai's own `mendops` database -
-  create it once locally with `CREATE DATABASE mendops;` on the same
-  Postgres instance the OMS services already use).
+  `approval_audit_params` tables in mend-ops-ai's own `mendops` database - a
+  sibling database specifically on oms-main's own Postgres container
+  (service name `postgres` on `oms-network`, port 5432) - product-service
+  and customer-service each run their own separate Postgres container, so
+  this isn't shared with those. Create the database and a dedicated role
+  once locally - see `application.properties`' `mendops.persistence.*`
+  comment for the exact SQL).
 - At startup, `ApprovalGate` reloads every persisted row back into its
   in-memory map. A `PENDING` (or `FAILED`) approval from before a restart is
   immediately visible and re-approvable - `RemediationActionExecutor`
@@ -185,16 +189,23 @@ curl -X POST http://localhost:8095/api/v1/agent/demo/unknown-pattern
 # Breakers CLOSED/lag fine but a DLQ backlog remains - typically escalates to replayDlqBatch
 curl -X POST http://localhost:8095/api/v1/agent/demo/dlq-backlog-recovered
 
+# HALF_OPEN breaker but no other symptoms (low lag, low DLQ) - typically escalates to
+# adjustRetryBudget
+curl -X POST http://localhost:8095/api/v1/agent/demo/transient-backpressure
+
 # Coverage metric (rule-engine hit rate vs. LLM escalation rate)
 curl http://localhost:8095/api/v1/agent/coverage
 ```
 
-Which action the LLM picks is a model decision, not guaranteed - but breaker state is
-the strongest signal for it: HALF_OPEN/OPEN reads as a live, unresolved incident (favors
-pageOncall), while all-CLOSED breakers with a lingering DLQ backlog reads as "already
-recovered, just needs cleanup" (favors replayDlqBatch). `HealthyStateRule` also checks DLQ
-depth now, not just breaker state and lag - without that, an all-CLOSED-breakers scenario
-with a growing backlog was being wrongly classified healthy and never reached the LLM at all.
+Which action the LLM picks is a model decision, not guaranteed - but breaker state plus
+whether there's a backlog is the strongest signal for it: HALF_OPEN/OPEN with a real backlog
+(high lag, high DLQ depth) reads as a live, unresolved incident (favors pageOncall);
+all-CLOSED breakers with a lingering DLQ backlog reads as "already recovered, just needs
+cleanup" (favors replayDlqBatch); a HALF_OPEN breaker with NO other symptoms reads as "mild,
+already recovering on its own, just needs a wider retry budget to get through it" (favors
+adjustRetryBudget). `HealthyStateRule` also checks DLQ depth now, not just breaker state and
+lag - without that, an all-CLOSED-breakers scenario with a growing backlog was being wrongly
+classified healthy and never reached the LLM at all.
 
 ## Stack
 

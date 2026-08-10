@@ -75,6 +75,28 @@ public class AgentController {
         return orchestrator.handle(state);
     }
 
+    /**
+     * Convenience endpoint: a breaker is HALF_OPEN (mild, still-probing stress) but nothing
+     * else is alarming - lag and DLQ depth are both low, so there's no backlog to clean up
+     * (ruling out replayDlqBatch) and nothing severe enough to obviously need a human
+     * (a HALF_OPEN breaker recovering on its own, with no other symptoms, is closer to
+     * "give it a wider retry budget to ride out the last bit of instability" than to
+     * "page someone"). Unlike demo/unknown-pattern (HALF_OPEN + a real DLQ backlog, which
+     * tends to escalate to pageOncall) or demo/dlq-backlog-recovered (CLOSED breakers +
+     * backlog, which tends to escalate to replayDlqBatch), this is the one demo scenario
+     * shaped for adjustRetryBudget specifically.
+     */
+    @PostMapping("/demo/transient-backpressure")
+    public String demoTransientBackpressure() {
+        SystemState state = new SystemState(
+                Instant.now(),
+                Map.of("productClient", SystemState.CircuitBreakerState.HALF_OPEN),
+                Map.of("product-service", 20L),
+                Map.of("oms.product.events.DLT", 5L)
+        );
+        return orchestrator.handle(state);
+    }
+
     @GetMapping("/coverage")
     public Map<String, Object> coverage() {
         return Map.of(

@@ -2,12 +2,14 @@ package com.giri.ai.mendops.agent;
 
 import com.giri.ai.mendops.model.RemediationAction;
 import com.giri.ai.mendops.remediation.PagingNotifier;
+import com.giri.ai.mendops.remediation.RemediationProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Real, scoped actions the LLM is allowed to invoke via Spring AI tool
@@ -32,7 +34,10 @@ import java.util.Map;
  * real dispatch for gated actions now lives in RemediationActionExecutorImpl,
  * reachable purely from the (actionType, params) data ApprovalGate persists,
  * independent of whether this class - or even this process - is still the
- * one handling the eventual approve() call.
+ * one handling the eventual approve() call. RemediationProperties IS still
+ * injected here, though - not to perform the action, just to validate
+ * adjustRetryBudget's serviceName against the known instance names before
+ * ever creating an approval (see that method).
  */
 @Component
 public class RemediationTools {
@@ -41,10 +46,13 @@ public class RemediationTools {
 
     private final ApprovalGate approvalGate;
     private final PagingNotifier pagingNotifier;
+    private final RemediationProperties remediationProperties;
 
-    public RemediationTools(ApprovalGate approvalGate, PagingNotifier pagingNotifier) {
+    public RemediationTools(ApprovalGate approvalGate, PagingNotifier pagingNotifier,
+                             RemediationProperties remediationProperties) {
         this.approvalGate = approvalGate;
         this.pagingNotifier = pagingNotifier;
+        this.remediationProperties = remediationProperties;
     }
 
     @Tool(description = "Propose replaying a batch of messages from a dead-letter queue topic "
@@ -70,6 +78,24 @@ public class RemediationTools {
             + "\"customerClient\") - it is case-sensitive and is not a general service label like "
             + "\"product-service\".")
     public String adjustRetryBudget(String serviceName, int maxAttempts) {
+        Set<String> knownServiceNames = (remediationProperties.retryBudget() == null
+                || remediationProperties.retryBudget().adminBaseUrl() == null)
+                ? Set.of()
+                : remediationProperties.retryBudget().adminBaseUrl().keySet();
+
+        if (!knownServiceNames.contains(serviceName)) {
+            log.warn("adjustRetryBudget called with unrecognized serviceName '{}' - known: {}",
+                    serviceName, knownServiceNames);
+            // Deliberately NOT calling approvalGate.propose() here - failing at propose-time
+            // instead of only at approve-time means a human never sees a doomed approval sitting
+            // in the queue, and the LLM gets immediate feedback to retry with a valid name instead
+            // of a human discovering the mismatch later via RetryBudgetAdminClient's own
+            // IllegalStateException.
+            return "Rejected: '" + serviceName + "' is not a recognized service name. Must be one of: "
+                    + knownServiceNames + " (case-sensitive - match the circuit breaker names shown "
+                    + "in the current system state exactly). Nothing was proposed.";
+        }
+
         String description = "Set retry budget for " + serviceName + " to " + maxAttempts + " attempts";
         String id = approvalGate.propose(
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,

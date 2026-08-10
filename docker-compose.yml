@@ -26,12 +26,15 @@ services:
       MENDOPS_OMS_SERVICE_PASSWORD: ${MENDOPS_OMS_SERVICE_PASSWORD}
 
       # --- mend-ops-ai's own persistence DB (approval/audit trail) ---
-      # mendops.persistence.jdbc-url is a plain scalar property (not a map key), so unlike
-      # outbox-sources below it COULD safely be overridden here via MENDOPS_PERSISTENCE_JDBCURL -
-      # left as localhost in application.properties for now, sharing the same "not yet resolved
-      # for container networking" gap as the outbox jdbc-urls below, since the actual Postgres
-      # container hostname on oms-network isn't known here. Override MENDOPS_PERSISTENCE_JDBCURL
-      # once you know it.
+      # postgres is oms-main's own Postgres container/service name (see its docker-compose.yml)
+      # on oms-network - "mendops" is a sibling database on that SAME instance, not a separate
+      # container. Create it (and a dedicated role - don't reuse oms-main's own DB_USERNAME,
+      # matching the least-privilege pattern already used for OMS_DB_READONLY_USER etc. below)
+      # once locally:
+      #   CREATE DATABASE mendops;
+      #   CREATE ROLE mendops_user WITH LOGIN PASSWORD '...';
+      #   GRANT ALL PRIVILEGES ON DATABASE mendops TO mendops_user;
+      MENDOPS_PERSISTENCE_JDBCURL: jdbc:postgresql://postgres:5432/mendops
       MENDOPS_DB_USER: ${MENDOPS_DB_USER}
       MENDOPS_DB_PASSWORD: ${MENDOPS_DB_PASSWORD}
 

@@ -10,10 +10,12 @@ import org.springframework.stereotype.Service;
  * (RemediationTools) so the model can both diagnose the failure in natural
  * language and select/parameterize a real remediation action.
  * <p>
- * v1 intentionally does NOT let the LLM call tools that act on production
- * without a human approval step in front of it - see AgentOrchestrator for
- * where that gate belongs. This class only produces a *proposed*
- * RemediationAction; it does not execute anything on its own.
+ * v1 intentionally does NOT let the LLM execute a remediation directly - the
+ * tools it calls for replayDlqBatch/adjustRetryBudget only ever create a
+ * PendingApproval (see ApprovalGate); the real action runs only once a human
+ * approves it via ApprovalController. This class only produces a *proposed*
+ * RemediationAction (or, for pageOncall, a real but non-destructive
+ * notification); it does not execute anything risky on its own.
  */
 @Service
 public class EscalationService {
@@ -37,13 +39,18 @@ public class EscalationService {
             now - treat that as a real recovery signal, not just an absence of alarm; a
             backlog (DLQ depth, outbox lag) alongside all-CLOSED breakers usually means the
             underlying cause has already resolved and what's left is cleanup, which is exactly
-            what replayDlqBatch/adjustRetryBudget are for. Reserve pageOncall for breakers that
-            are OPEN or HALF_OPEN (the failure is still live or still being probed) or for
-            genuinely ambiguous signals - don't default to it just because a human could also
-            handle it. Produce a concise diagnosis in plain English, then decide whether an
-            automated remediation is appropriate or whether this should be escalated to a
-            human. Prefer paging a human when you are not confident, when the situation could
-            involve data loss, or when the correct action is ambiguous.
+            what replayDlqBatch is for. A HALF_OPEN breaker with NO other symptoms (low lag, low
+            DLQ depth) means the service is already recovering on its own and just needs a
+            wider retry budget to get through the last bit of transient instability without
+            tripping back to OPEN - that's what adjustRetryBudget is for, and it does not need
+            a human in the loop just because the breaker isn't fully CLOSED yet. Reserve
+            pageOncall for an OPEN breaker, a HALF_OPEN breaker WITH other symptoms (a real
+            backlog, high lag - i.e. still actively failing, not just probing), or genuinely
+            ambiguous signals - don't default to it just because a human could also handle it.
+            Produce a concise diagnosis in plain English, then decide whether an automated
+            remediation is appropriate or whether this should be escalated to a human. Prefer
+            paging a human when you are not confident, when the situation could involve data
+            loss, or when the correct action is ambiguous.
             """;
 
     private final ChatClient chatClient;
@@ -57,13 +64,12 @@ public class EscalationService {
 
     /**
      * Asks the LLM to diagnose an unmatched SystemState and propose - or directly
-     * take, for low-risk tool calls like pageOncall - a remediation.
+     * take, for the low-risk pageOncall tool call - a remediation.
      * <p>
-     * NOTE: v1 uses defaultTools directly, meaning the model can invoke any
-     * RemediationTools method it decides on. Before this touches anything
-     * beyond a demo/local environment, add an approval gate here for
-     * actionTypes other than PAGE_ONCALL, per the guardrail design discussed
-     * in project notes.
+     * Uses defaultTools directly, meaning the model can invoke any RemediationTools
+     * method it decides on - safe because replayDlqBatch/adjustRetryBudget are
+     * approval-gated at the tool-implementation level (see RemediationTools), not
+     * because anything here restricts which tools the model can reach.
      */
     public String diagnoseAndAct(SystemState state) {
         String userMessage = """
