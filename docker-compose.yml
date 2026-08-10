@@ -20,6 +20,16 @@ services:
 
       MENDOPS_TELEMETRY_POLLINTERVALMS: 15000
 
+      # --- oms-main service-account auth (for adjustRetryBudget's admin endpoint call) ---
+      MENDOPS_OMSAUTH_BASEURL: http://app:8080
+      MENDOPS_OMS_SERVICE_USERNAME: ${MENDOPS_OMS_SERVICE_USERNAME}
+      MENDOPS_OMS_SERVICE_PASSWORD: ${MENDOPS_OMS_SERVICE_PASSWORD}
+
+      # --- Retry-budget admin endpoint (values only - see application.properties for why
+      #     the productClient/customerClient map keys themselves stay out of env vars) ---
+      MENDOPS_RETRYBUDGET_PRODUCTCLIENT_URL: http://app:8081
+      MENDOPS_RETRYBUDGET_CUSTOMERCLIENT_URL: http://app:8081
+
       # --- Outbox DB credentials ---
       # NOTE: mendops.telemetry.outbox-sources is a Map keyed by service name
       # (oms-main / product-service / customer-service). Relaxed env-var

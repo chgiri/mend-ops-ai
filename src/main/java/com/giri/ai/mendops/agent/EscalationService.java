@@ -31,8 +31,8 @@ public class EscalationService {
             combination of signals.
 
             Reason about which services are affected and how the failure likely propagates
-            given the known call graph (order creation depends on ProductClient and
-            CustomerClient calls; outbox publishers feed Kafka topics consumed by other
+            given the known call graph (order creation depends on productClient and
+            customerClient calls; outbox publishers feed Kafka topics consumed by other
             services). A CLOSED breaker for a service means calls to it are succeeding right
             now - treat that as a real recovery signal, not just an absence of alarm; a
             backlog (DLQ depth, outbox lag) alongside all-CLOSED breakers usually means the

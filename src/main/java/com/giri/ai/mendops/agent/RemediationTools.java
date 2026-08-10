@@ -70,7 +70,10 @@ public class RemediationTools {
     @Tool(description = "Propose temporarily widening a Resilience4j retry budget (max attempts) "
             + "for a named client, to ride out transient backpressure without tripping the "
             + "circuit breaker. This does NOT execute immediately - it is queued for human "
-            + "approval and only runs once approved.")
+            + "approval and only runs once approved. serviceName MUST exactly match one of the "
+            + "circuit breaker names shown in the current system state (e.g. \"productClient\", "
+            + "\"customerClient\") - it is case-sensitive and is not a general service label like "
+            + "\"product-service\".")
     public String adjustRetryBudget(String serviceName, int maxAttempts) {
         String description = "Set retry budget for " + serviceName + " to " + maxAttempts + " attempts";
         String id = approvalGate.propose(
