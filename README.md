@@ -101,28 +101,66 @@ that's the point to add JPA persistence.
 - **`adjustRetryBudget`** - `productClient`/`customerClient` are Resilience4j
   instance names for oms-main's own outbound clients (see e.g.
   `CustomerClientImpl`) - product-service/customer-service don't implement
-  Resilience4j themselves. So this calls an admin endpoint on **oms-main**
-  (`POST {admin-base-url}/internal/resilience/retry-budget`, body
-  `{"clientName": "...", "maxAttempts": N}`), same host as
+  Resilience4j themselves. So this authenticates as mend-ops-ai's own
+  SERVICE-role account (`OmsAuthClient`, via oms-main's real `/api/v1/auth/login`
+  flow, JWT cached with a refresh buffer) and calls a custom Actuator
+  `@WriteOperation` endpoint on **oms-main**'s management port -
+  `POST {admin-base-url}/actuator/retrybudget`, body
+  `{"clientName": "...", "maxAttempts": N}` - same host as
   `mendops.telemetry.circuit-breakers.actuator-base-url`. Configured per
   Resilience4j instance name (not per downstream service) under
   `mendops.remediation.retry-budget.admin-base-url.<instanceName>` - in
   practice both `productClient` and `customerClient` point at the same
-  oms-main host. If oms-main doesn't expose that endpoint yet, the call
-  fails loudly rather than silently no-oping.
+  oms-main host. If oms-main doesn't expose that endpoint yet, or auth fails,
+  the call fails loudly rather than silently no-oping.
 - **`pageOncall`** - POSTs `{"text": "..."}` to a Slack-incoming-webhook-style
   URL (`mendops.remediation.paging.webhook-url`). Since paging executes
   immediately and isn't approval-gated, a missing/failing webhook logs at
   WARN/ERROR instead of throwing, so it never blocks the one action path
   that's supposed to always work.
 
+## Crash-safe resumable approvals
+
+`replayDlqBatch`/`adjustRetryBudget` don't run immediately - `RemediationTools`
+calls `ApprovalGate.propose()`, which stores the action as DATA (an
+`actionType` + a flat `Map<String,String>` of params, e.g.
+`{"topic": "...", "count": "5"}`) rather than a captured `Callable`. That's
+what makes this genuinely crash-safe, not just an audit log:
+
+- Every propose/approve/reject/fail is written through to
+  `ApprovalAuditRepository` (JPA, `approval_audit` +
+  `approval_audit_params` tables in mend-ops-ai's own `mendops` database -
+  create it once locally with `CREATE DATABASE mendops;` on the same
+  Postgres instance the OMS services already use).
+- At startup, `ApprovalGate` reloads every persisted row back into its
+  in-memory map. A `PENDING` (or `FAILED`) approval from before a restart is
+  immediately visible and re-approvable - `RemediationActionExecutor`
+  re-derives the real Kafka/admin-endpoint call from the stored
+  `actionType`+params, with no dependency on the process that originally
+  proposed it.
+- Persistence writes are best-effort: if the DB is unreachable,
+  propose/approve/reject still work against the in-memory map exactly as
+  before - a remediation that already ran successfully is never reported as
+  failed just because the write-through afterward couldn't reach the DB. The
+  trade-off is narrower than a full outage-proof design: an approval
+  proposed while the DB is down simply won't survive a restart, since there
+  was never a persisted row to reload it from.
+- `APPROVED`/`REJECTED` are terminal; `PENDING`/`FAILED` are both
+  (re-)approvable, since a `FAILED` execution's underlying cause (a
+  transient Kafka blip, an admin endpoint not yet deployed) may since be
+  resolved.
+
+`GET /api/v1/agent/approvals` reflects `ApprovalGate.all()`, which - now
+that it's rehydrated from the DB at startup - already shows full history
+across restarts; there's no separate history-only endpoint.
+
 ## Not yet built (intentionally out of v1 scope)
 
 - **Rule-promotion flow.** The LLM authoring a new `RemediationRule` from a
   resolved unknown incident, queued for human review, then added to
   `RuleEngine`'s rule list. This is the "gets cheaper over time" story - the
-  next major milestone now that telemetry + the approval gate are both done.
-- **Persistent approval/audit history.** Currently in-memory only.
+  last major piece now that telemetry, the approval gate, real tool
+  integrations, and crash-safe persistence are all done.
 
 ## Running locally
 

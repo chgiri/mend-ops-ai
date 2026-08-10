@@ -1,13 +1,13 @@
 package com.giri.ai.mendops.agent;
 
 import com.giri.ai.mendops.model.RemediationAction;
-import com.giri.ai.mendops.remediation.DlqReplayService;
 import com.giri.ai.mendops.remediation.PagingNotifier;
-import com.giri.ai.mendops.remediation.RetryBudgetAdminClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
+
+import java.util.Map;
 
 /**
  * Real, scoped actions the LLM is allowed to invoke via Spring AI tool
@@ -16,18 +16,23 @@ import org.springframework.stereotype.Component;
  * vs. LLM division).
  * <p>
  * replayDlqBatch and adjustRetryBudget are gated behind ApprovalGate: calling
- * them does NOT run the real action - it records a PendingApproval and
- * returns only an id/acknowledgement to the LLM. The real Kafka/admin-endpoint
- * call only happens if a human approves it via ApprovalController. pageOncall
- * is NOT gated - paging is a notification, not a destructive action, so it
- * still executes immediately, matching the original guardrail design (every
- * ActionType except PAGE_ONCALL needs approval).
+ * them does NOT run the real action - it records a PendingApproval as DATA
+ * (an actionType + a params map, not a Callable) and returns only an
+ * id/acknowledgement to the LLM. The real Kafka/admin-endpoint call only
+ * happens if a human approves it via ApprovalController, dispatched through
+ * RemediationActionExecutor from that stored data - which is also what makes
+ * a still-PENDING approval resumable after a restart (see PendingApproval's
+ * Javadoc). pageOncall is NOT gated - paging is a notification, not a
+ * destructive action, so it still executes immediately and doesn't need to
+ * be resumable, matching the original guardrail design (every ActionType
+ * except PAGE_ONCALL needs approval).
  * <p>
- * The real integrations live in the {@code remediation} package
- * (DlqReplayService, RetryBudgetAdminClient, PagingNotifier) - this class
- * stays a thin @Tool-annotated adapter over them so the LLM-facing surface
- * (descriptions, ApprovalGate wiring) is easy to scan independently of the
- * integration details.
+ * This class no longer depends on DlqReplayService/RetryBudgetAdminClient
+ * directly (PagingNotifier is still needed for the ungated pageOncall) - the
+ * real dispatch for gated actions now lives in RemediationActionExecutorImpl,
+ * reachable purely from the (actionType, params) data ApprovalGate persists,
+ * independent of whether this class - or even this process - is still the
+ * one handling the eventual approve() call.
  */
 @Component
 public class RemediationTools {
@@ -35,15 +40,10 @@ public class RemediationTools {
     private static final Logger log = LoggerFactory.getLogger(RemediationTools.class);
 
     private final ApprovalGate approvalGate;
-    private final DlqReplayService dlqReplayService;
-    private final RetryBudgetAdminClient retryBudgetAdminClient;
     private final PagingNotifier pagingNotifier;
 
-    public RemediationTools(ApprovalGate approvalGate, DlqReplayService dlqReplayService,
-                             RetryBudgetAdminClient retryBudgetAdminClient, PagingNotifier pagingNotifier) {
+    public RemediationTools(ApprovalGate approvalGate, PagingNotifier pagingNotifier) {
         this.approvalGate = approvalGate;
-        this.dlqReplayService = dlqReplayService;
-        this.retryBudgetAdminClient = retryBudgetAdminClient;
         this.pagingNotifier = pagingNotifier;
     }
 
@@ -56,12 +56,7 @@ public class RemediationTools {
         String id = approvalGate.propose(
                 RemediationAction.ActionType.REPLAY_DLQ_BATCH,
                 description,
-                () -> {
-                    int replayed = dlqReplayService.replayBatch(topic, count);
-                    log.info("[TOOL:EXECUTED] replayDlqBatch topic={} requested={} replayed={}",
-                            topic, count, replayed);
-                    return "Replayed " + replayed + " of " + count + " requested messages from " + topic;
-                }
+                Map.of("topic", topic, "count", Integer.toString(count))
         );
         return "Proposed and awaiting human approval (approvalId=" + id + "). "
                 + description + ". No messages have been replayed yet.";
@@ -79,12 +74,7 @@ public class RemediationTools {
         String id = approvalGate.propose(
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
                 description,
-                () -> {
-                    retryBudgetAdminClient.adjust(serviceName, maxAttempts);
-                    log.info("[TOOL:EXECUTED] adjustRetryBudget service={} maxAttempts={}",
-                            serviceName, maxAttempts);
-                    return "Retry budget for " + serviceName + " set to " + maxAttempts + " attempts";
-                }
+                Map.of("serviceName", serviceName, "maxAttempts", Integer.toString(maxAttempts))
         );
         return "Proposed and awaiting human approval (approvalId=" + id + "). "
                 + description + ". No retry budget has been changed yet.";

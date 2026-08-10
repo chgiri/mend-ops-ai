@@ -3,18 +3,26 @@ package com.giri.ai.mendops.agent;
 import com.giri.ai.mendops.model.RemediationAction;
 
 import java.time.Instant;
-import java.util.concurrent.Callable;
+import java.util.Map;
 
 /**
  * A risky remediation the LLM proposed but hasn't been allowed to run yet.
- * The actual side-effecting logic is captured in {@code execution} at
- * proposal time and only invoked by {@link ApprovalGate#approve} - nothing
- * about the real action happens until a human explicitly approves this.
  * <p>
- * Mutable by design (status/resolvedAt/executionResult/failureReason change
- * in place) so ApprovalGate can hold a single instance per id rather than
- * replacing map entries - this class is not exposed directly over REST; see
- * ApprovalController's view DTO, since {@code execution} isn't serializable.
+ * Deliberately holds the action as DATA (actionType + a flat String/String
+ * params map), not as a captured Callable/closure - that's what makes this
+ * crash-safe resumable: ApprovalGate can persist this object's fields as-is,
+ * reload them after a restart, and re-derive the real call via
+ * RemediationActionExecutor.execute(actionType, params) at approval time,
+ * whenever that happens to be. An earlier version of this class captured a
+ * Callable<String> instead - simpler, but meant a PENDING approval was
+ * silently unresumable after any restart, since a closure over live beans
+ * can't be serialized. See RemediationActionExecutor's Javadoc for the
+ * dispatch side of this.
+ * <p>
+ * Mutable by design (status/resolvedAt/executionResult/failureReason/createdAt
+ * change in place) so ApprovalGate can hold a single instance per id rather
+ * than replacing map entries - this class is not exposed directly over REST;
+ * see ApprovalController's view DTO.
  */
 public class PendingApproval {
 
@@ -30,27 +38,44 @@ public class PendingApproval {
     }
 
     private final String id;
-    private final Instant createdAt;
     private final RemediationAction.ActionType actionType;
     private final String description;
-    private final Callable<String> execution;
+    private final Map<String, String> params;
 
+    private volatile Instant createdAt = Instant.now();
     private volatile Status status = Status.PENDING;
     private volatile Instant resolvedAt;
     private volatile String executionResult;
     private volatile String failureReason;
 
     public PendingApproval(String id, RemediationAction.ActionType actionType, String description,
-                            Callable<String> execution) {
+                            Map<String, String> params) {
         this.id = id;
-        this.createdAt = Instant.now();
         this.actionType = actionType;
         this.description = description;
-        this.execution = execution;
+        this.params = params;
     }
 
-    String runExecution() throws Exception {
-        return execution.call();
+    /**
+     * Rebuilds a PendingApproval from a persisted row (ApprovalGate does this
+     * for every row at startup) - unlike the public constructor, this
+     * reflects exactly what was stored rather than treating the approval as
+     * newly proposed.
+     */
+    static PendingApproval rehydrate(String id, RemediationAction.ActionType actionType, String description,
+                                      Map<String, String> params, Status status, Instant createdAt,
+                                      Instant resolvedAt, String executionResult, String failureReason) {
+        PendingApproval approval = new PendingApproval(id, actionType, description, params);
+        approval.createdAt = createdAt;
+        approval.status = status;
+        approval.resolvedAt = resolvedAt;
+        approval.executionResult = executionResult;
+        approval.failureReason = failureReason;
+        return approval;
+    }
+
+    Map<String, String> params() {
+        return params;
     }
 
     void markApproved(String result) {

@@ -20,7 +20,13 @@ public class ApprovalController {
         this.approvalGate = approvalGate;
     }
 
-    /** View-only projection of PendingApproval - the real object holds a Callable, not serializable. */
+    /**
+     * View-only projection of PendingApproval, excluding its params map -
+     * params are RemediationActionExecutor's implementation detail (which
+     * primitives a given actionType needs), not something a human approving
+     * via this API needs to see; description already says what the action
+     * does in plain English.
+     */
     public record ApprovalView(
             String id,
             Instant createdAt,

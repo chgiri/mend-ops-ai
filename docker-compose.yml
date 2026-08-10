@@ -25,6 +25,16 @@ services:
       MENDOPS_OMS_SERVICE_USERNAME: ${MENDOPS_OMS_SERVICE_USERNAME}
       MENDOPS_OMS_SERVICE_PASSWORD: ${MENDOPS_OMS_SERVICE_PASSWORD}
 
+      # --- mend-ops-ai's own persistence DB (approval/audit trail) ---
+      # mendops.persistence.jdbc-url is a plain scalar property (not a map key), so unlike
+      # outbox-sources below it COULD safely be overridden here via MENDOPS_PERSISTENCE_JDBCURL -
+      # left as localhost in application.properties for now, sharing the same "not yet resolved
+      # for container networking" gap as the outbox jdbc-urls below, since the actual Postgres
+      # container hostname on oms-network isn't known here. Override MENDOPS_PERSISTENCE_JDBCURL
+      # once you know it.
+      MENDOPS_DB_USER: ${MENDOPS_DB_USER}
+      MENDOPS_DB_PASSWORD: ${MENDOPS_DB_PASSWORD}
+
       # --- Retry-budget admin endpoint (values only - see application.properties for why
       #     the productClient/customerClient map keys themselves stay out of env vars) ---
       MENDOPS_RETRYBUDGET_PRODUCTCLIENT_URL: http://app:8081
