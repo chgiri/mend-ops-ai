@@ -2,13 +2,14 @@ package com.giri.ai.mendops.rules.impl;
 
 import com.giri.ai.mendops.model.RemediationAction;
 import com.giri.ai.mendops.model.SystemState;
+import com.giri.ai.mendops.rules.AnomalyThresholds;
 import com.giri.ai.mendops.rules.RemediationRule;
 import org.springframework.stereotype.Component;
 
 /**
  * Catches the steady/nothing-wrong state: every circuit breaker CLOSED, no
- * outbox lag above OutboxLagRule's threshold, and no DLQ backlog above
- * DLQ_DEPTH_THRESHOLD.
+ * outbox lag above AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS, and no
+ * DLQ backlog above AnomalyThresholds.DLQ_DEPTH_THRESHOLD.
  * <p>
  * Exists specifically because SystemStatePoller now runs continuously on a
  * schedule (unlike the original on-demand demo endpoints) - without this
@@ -31,12 +32,13 @@ import org.springframework.stereotype.Component;
  * remains" pattern replayDlqBatch exists for - was being wrongly classified
  * healthy and never reached EscalationService at all, since no other rule
  * in this project checks DLQ depth either.
+ * <p>
+ * IncidentTracker's anomalous-fact computation is deliberately kept in sync
+ * with this rule's exact definition of "anomalous" (same AnomalyThresholds
+ * constants) - see that class's Javadoc for why that consistency matters.
  */
 @Component
 public class HealthyStateRule implements RemediationRule {
-
-    private static final long LAG_THRESHOLD_SECONDS = 120;
-    private static final long DLQ_DEPTH_THRESHOLD = 50;
 
     @Override
     public String id() {
@@ -55,10 +57,10 @@ public class HealthyStateRule implements RemediationRule {
                 .allMatch(cb -> cb == SystemState.CircuitBreakerState.CLOSED);
 
         boolean anyLagHigh = state.outboxLagSeconds().values().stream()
-                .anyMatch(lag -> lag != null && lag > LAG_THRESHOLD_SECONDS);
+                .anyMatch(lag -> lag != null && lag > AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS);
 
         boolean anyDlqDeep = state.dlqDepth().values().stream()
-                .anyMatch(depth -> depth != null && depth > DLQ_DEPTH_THRESHOLD);
+                .anyMatch(depth -> depth != null && depth > AnomalyThresholds.DLQ_DEPTH_THRESHOLD);
 
         return allBreakersClosed && !anyLagHigh && !anyDlqDeep;
     }

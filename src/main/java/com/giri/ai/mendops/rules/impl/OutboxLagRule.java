@@ -2,6 +2,7 @@ package com.giri.ai.mendops.rules.impl;
 
 import com.giri.ai.mendops.model.RemediationAction;
 import com.giri.ai.mendops.model.SystemState;
+import com.giri.ai.mendops.rules.AnomalyThresholds;
 import com.giri.ai.mendops.rules.RemediationRule;
 import org.springframework.stereotype.Component;
 
@@ -16,8 +17,6 @@ import java.util.Map;
  */
 @Component
 public class OutboxLagRule implements RemediationRule {
-
-    private static final long LAG_THRESHOLD_SECONDS = 120;
 
     @Override
     public String id() {
@@ -37,7 +36,7 @@ public class OutboxLagRule implements RemediationRule {
     }
 
     private boolean lagAboveThresholdWithoutOpenBreaker(Map.Entry<String, Long> entry) {
-        boolean lagHigh = entry.getValue() != null && entry.getValue() > LAG_THRESHOLD_SECONDS;
+        boolean lagHigh = entry.getValue() != null && entry.getValue() > AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS;
         return lagHigh; // breaker-state cross-check kept simple for v1
     }
 
@@ -49,7 +48,8 @@ public class OutboxLagRule implements RemediationRule {
                 .orElse("unknown");
 
         return new RemediationAction(
-                "Outbox publish lag on " + mostLaggingService + " exceeds " + LAG_THRESHOLD_SECONDS
+                "Outbox publish lag on " + mostLaggingService + " exceeds "
+                        + AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS
                         + "s with no open circuit breaker - likely producer backpressure.",
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
                 mostLaggingService,
