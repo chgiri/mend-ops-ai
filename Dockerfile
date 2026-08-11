@@ -20,11 +20,11 @@ USER mendops
 
 COPY --from=build /build/target/*.jar app.jar
 
-EXPOSE 8095
+EXPOSE 8099
 
 # Matches management.endpoints.web.exposure.include=health,info in application.properties.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD wget -qO- http://localhost:8095/actuator/health | grep -q '"status":"UP"' || exit 1
+    CMD wget -qO- http://localhost:8099/actuator/health | grep -q '"status":"UP"' || exit 1
 
 # GEMINI_API_KEY, mendops.telemetry.* DB/Kafka credentials, etc. are expected
 # to be supplied at runtime (docker run -e / docker-compose environment /

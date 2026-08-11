@@ -71,13 +71,13 @@ executes immediately.
 
 ```bash
 # See what's awaiting approval
-curl http://localhost:8095/api/v1/agent/approvals?pendingOnly=true
+curl http://localhost:8099/api/v1/agent/approvals?pendingOnly=true
 
 # Approve one (this is when the real action actually runs)
-curl -X POST http://localhost:8095/api/v1/agent/approvals/<id>/approve
+curl -X POST http://localhost:8099/api/v1/agent/approvals/<id>/approve
 
 # Reject one (no action taken, marked resolved)
-curl -X POST http://localhost:8095/api/v1/agent/approvals/<id>/reject
+curl -X POST http://localhost:8099/api/v1/agent/approvals/<id>/reject
 ```
 
 v1 stores approvals in memory only (lost on restart) - fine for local/demo
@@ -128,14 +128,14 @@ calls `ApprovalGate.propose()`, which stores the action as DATA (an
 what makes this genuinely crash-safe, not just an audit log:
 
 - Every propose/approve/reject/fail is written through to
-  `ApprovalAuditRepository` (JPA, `approval_audit` +
-  `approval_audit_params` tables in mend-ops-ai's own `mendops` database - a
-  sibling database specifically on oms-main's own Postgres container
-  (service name `postgres` on `oms-network`, port 5432) - product-service
-  and customer-service each run their own separate Postgres container, so
-  this isn't shared with those. Create the database and a dedicated role
-  once locally - see `application.properties`' `mendops.persistence.*`
-  comment for the exact SQL).
+  `ApprovalAuditRepository` (JPA, `approval_audit` + `approval_audit_params`
+  tables in mend-ops-ai's own `mendops` database, on its own dedicated
+  Postgres container - `mend-ops-postgres` in `docker-compose.yml` - not
+  shared with any of the OMS stack's own databases. Database/role are
+  created automatically by the postgres image on first boot; schema comes
+  from `db/init.sql`, and Hibernate validates against it rather than
+  managing it - see `spring.jpa.hibernate.ddl-auto` in
+  `application.properties`).
 - At startup, `ApprovalGate` reloads every persisted row back into its
   in-memory map. A `PENDING` (or `FAILED`) approval from before a restart is
   immediately visible and re-approvable - `RemediationActionExecutor`
@@ -181,20 +181,20 @@ demand without waiting for a real failure:
 
 ```bash
 # Known pattern - resolved by the rule engine, no LLM call
-curl -X POST http://localhost:8095/api/v1/agent/demo/product-circuit-open
+curl -X POST http://localhost:8099/api/v1/agent/demo/product-circuit-open
 
 # Unusual combination, HALF_OPEN breaker (still-live signal) - typically escalates to pageOncall
-curl -X POST http://localhost:8095/api/v1/agent/demo/unknown-pattern
+curl -X POST http://localhost:8099/api/v1/agent/demo/unknown-pattern
 
 # Breakers CLOSED/lag fine but a DLQ backlog remains - typically escalates to replayDlqBatch
-curl -X POST http://localhost:8095/api/v1/agent/demo/dlq-backlog-recovered
+curl -X POST http://localhost:8099/api/v1/agent/demo/dlq-backlog-recovered
 
 # HALF_OPEN breaker but no other symptoms (low lag, low DLQ) - typically escalates to
 # adjustRetryBudget
-curl -X POST http://localhost:8095/api/v1/agent/demo/transient-backpressure
+curl -X POST http://localhost:8099/api/v1/agent/demo/transient-backpressure
 
 # Coverage metric (rule-engine hit rate vs. LLM escalation rate)
-curl http://localhost:8095/api/v1/agent/coverage
+curl http://localhost:8099/api/v1/agent/coverage
 ```
 
 Which action the LLM picks is a model decision, not guaranteed - but breaker state plus

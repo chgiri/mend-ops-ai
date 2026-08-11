@@ -1,11 +1,39 @@
 services:
+  mend-ops-postgres:
+    image: postgres:16-alpine
+    container_name: mend-ops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MENDOPS_DB_NAME:-mendops}
+      POSTGRES_USER: ${MENDOPS_DB_USER}
+      POSTGRES_PASSWORD: ${MENDOPS_DB_PASSWORD}
+    ports:
+      # 5436, not 5432/5433/5434/5435 - those are already oms-main/product-db/
+      # customer-db/shipment-db's host ports on the OMS stack this attaches to.
+      - "5436:5432"
+    volumes:
+      - mend-ops-postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MENDOPS_DB_USER} -d ${MENDOPS_DB_NAME:-mendops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - oms-network
+
   mend-ops-ai:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: mend-ops-ai
+    restart: unless-stopped
+    depends_on:
+      mend-ops-postgres:
+        condition: service_healthy
     ports:
-      - "8095:8095"
+      - "8099:8099"
     environment:
       # --- LLM ---
       GEMINI_API_KEY: ${GEMINI_API_KEY}
@@ -26,15 +54,15 @@ services:
       MENDOPS_OMS_SERVICE_PASSWORD: ${MENDOPS_OMS_SERVICE_PASSWORD}
 
       # --- mend-ops-ai's own persistence DB (approval/audit trail) ---
-      # postgres is oms-main's own Postgres container/service name (see its docker-compose.yml)
-      # on oms-network - "mendops" is a sibling database on that SAME instance, not a separate
-      # container. Create it (and a dedicated role - don't reuse oms-main's own DB_USERNAME,
-      # matching the least-privilege pattern already used for OMS_DB_READONLY_USER etc. below)
-      # once locally:
-      #   CREATE DATABASE mendops;
-      #   CREATE ROLE mendops_user WITH LOGIN PASSWORD '...';
-      #   GRANT ALL PRIVILEGES ON DATABASE mendops TO mendops_user;
-      MENDOPS_PERSISTENCE_JDBCURL: jdbc:postgresql://postgres:5432/mendops
+      # mend-ops-postgres (above) is mend-ops-ai's OWN dedicated Postgres container - fully
+      # separate from oms-main's "postgres" container/DB, not a sibling database on it. The
+      # database/role are created automatically by the postgres image itself from
+      # POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD on first boot - no manual CREATE DATABASE
+      # needed. Schema (approval_audit / approval_audit_params) comes from db/init.sql, mounted
+      # into /docker-entrypoint-initdb.d/ below and run automatically on that same first boot;
+      # spring.jpa.hibernate.ddl-auto=validate means Hibernate checks the schema matches at
+      # startup rather than owning/altering it - see application.properties and db/init.sql.
+      MENDOPS_PERSISTENCE_JDBCURL: jdbc:postgresql://mend-ops-postgres:5432/${MENDOPS_DB_NAME:-mendops}
       MENDOPS_DB_USER: ${MENDOPS_DB_USER}
       MENDOPS_DB_PASSWORD: ${MENDOPS_DB_PASSWORD}
 
@@ -62,7 +90,6 @@ services:
       - .env
     networks:
       - oms-network
-    restart: unless-stopped
 
 networks:
   oms-network:
@@ -70,6 +97,10 @@ networks:
     # Must match the network name actually created by oms-main's own
     # docker-compose.yml (check with `docker network ls` - typically
     # <oms-main-directory-name>_oms-network unless a top-level `name:` was
-    # set there). This compose file intentionally does not start oms-main,
-    # product-service, customer-service, or Kafka - it only attaches to
-    # their existing network, so bring the OMS stack up first.
+    # set there). This compose file starts mend-ops-postgres itself (mend-ops-ai's
+    # OWN dedicated database - see that service above), but still does NOT start
+    # oms-main, product-service, customer-service, or Kafka - it only attaches to
+    # their existing network to reach those, so bring the OMS stack up first.
+
+volumes:
+  mend-ops-postgres-data:
