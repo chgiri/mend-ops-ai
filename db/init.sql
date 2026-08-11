@@ -14,13 +14,18 @@
 -- silently creating/altering it - if you add a field to ApprovalAuditEntity,
 -- add the matching column here too, or startup will fail validation.
 
+-- created_at/resolved_at are TIMESTAMPTZ, not plain TIMESTAMP - Hibernate 6+
+-- defaults to mapping java.time.Instant (see ApprovalAuditEntity) to
+-- TIMESTAMP WITH TIME ZONE, and ddl-auto=validate fails startup outright on
+-- a column-type mismatch rather than tolerating it.
+
 CREATE TABLE IF NOT EXISTS approval_audit (
     id                 VARCHAR(255) PRIMARY KEY,
     action_type        VARCHAR(255) NOT NULL,
     description        TEXT         NOT NULL,
     status             VARCHAR(255) NOT NULL,
-    created_at         TIMESTAMP    NOT NULL,
-    resolved_at        TIMESTAMP,
+    created_at         TIMESTAMPTZ  NOT NULL,
+    resolved_at        TIMESTAMPTZ,
     execution_result   TEXT,
     failure_reason     TEXT
 );
