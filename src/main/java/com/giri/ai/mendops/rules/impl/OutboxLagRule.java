@@ -18,6 +18,11 @@ import java.util.Map;
 @Component
 public class OutboxLagRule implements RemediationRule {
 
+    // Matches the same default RuleCandidateDraftingService falls back to when the LLM
+    // omits a value - this rule has no per-instance human review to draw a tuned value
+    // from, so a shared, known-reasonable default is the honest choice here.
+    private static final int DEFAULT_MAX_ATTEMPTS = 5;
+
     @Override
     public String id() {
         return "outbox-publish-lag";
@@ -53,7 +58,8 @@ public class OutboxLagRule implements RemediationRule {
                         + "s with no open circuit breaker - likely producer backpressure.",
                 RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
                 mostLaggingService,
-                RemediationAction.Source.RULE_ENGINE
+                RemediationAction.Source.RULE_ENGINE,
+                Map.of("serviceName", mostLaggingService, "maxAttempts", String.valueOf(DEFAULT_MAX_ATTEMPTS))
         );
     }
 }

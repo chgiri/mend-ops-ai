@@ -53,7 +53,8 @@ public class DataDrivenRule implements RemediationRule {
                         ? candidate.diagnosis() : "Promoted rule matched: " + candidate.sourceFact(),
                 candidate.actionType(),
                 targetFrom(candidate.actionType(), candidate.actionParams()),
-                RemediationAction.Source.RULE_ENGINE
+                RemediationAction.Source.RULE_ENGINE,
+                candidate.actionParams()
         );
     }
 

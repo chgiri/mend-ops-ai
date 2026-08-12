@@ -22,7 +22,7 @@ class RuleEngineTest {
             public boolean matches(SystemState state) { return true; }
             public RemediationAction actionFor(SystemState state) {
                 return new RemediationAction("diag", RemediationAction.ActionType.NO_ACTION,
-                        "svc", RemediationAction.Source.RULE_ENGINE);
+                        "svc", RemediationAction.Source.RULE_ENGINE, Map.of());
             }
         };
         RuleEngine engine = new RuleEngine(List.of(alwaysMatches));

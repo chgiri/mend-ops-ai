@@ -6,6 +6,8 @@ import com.giri.ai.mendops.rules.AnomalyThresholds;
 import com.giri.ai.mendops.rules.RemediationRule;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 /**
  * Catches the steady/nothing-wrong state: every circuit breaker CLOSED, no
  * outbox lag above AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS, and no
@@ -71,7 +73,8 @@ public class HealthyStateRule implements RemediationRule {
                 "System healthy - no circuit breakers open, no significant outbox lag.",
                 RemediationAction.ActionType.NO_ACTION,
                 "none",
-                RemediationAction.Source.RULE_ENGINE
+                RemediationAction.Source.RULE_ENGINE,
+                Map.of()
         );
     }
 }

@@ -5,6 +5,8 @@ import com.giri.ai.mendops.model.SystemState;
 import com.giri.ai.mendops.rules.RemediationRule;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 /**
  * Known pattern: ProductClient's circuit breaker has tripped open.
  * This is a well-understood failure mode from OMS's Stage 4 extraction -
@@ -34,12 +36,14 @@ public class ProductServiceCircuitOpenRule implements RemediationRule {
 
     @Override
     public RemediationAction actionFor(SystemState state) {
+        String diagnosis = "ProductClient circuit breaker is open; product-service is likely degraded or "
+                + "unreachable, blocking order creation.";
         return new RemediationAction(
-                "ProductClient circuit breaker is open; product-service is likely degraded or "
-                        + "unreachable, blocking order creation.",
+                diagnosis,
                 RemediationAction.ActionType.PAGE_ONCALL,
                 "product-service",
-                RemediationAction.Source.RULE_ENGINE
+                RemediationAction.Source.RULE_ENGINE,
+                Map.of("summary", diagnosis)
         );
     }
 }
