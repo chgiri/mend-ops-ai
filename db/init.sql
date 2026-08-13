@@ -39,3 +39,41 @@ CREATE TABLE IF NOT EXISTS approval_audit_params (
 
 CREATE INDEX IF NOT EXISTS idx_approval_audit_status ON approval_audit (status);
 CREATE INDEX IF NOT EXISTS idx_approval_audit_created_at ON approval_audit (created_at);
+
+-- Schema for the rule-promotion flow's persistence (RuleCandidateEntity) -
+-- same reasoning as approval_audit above: column names/types match the JPA
+-- mapping exactly, validated (not created/altered) at startup.
+
+CREATE TABLE IF NOT EXISTS rule_candidate (
+    id                            VARCHAR(255) PRIMARY KEY,
+    source_fact                   VARCHAR(255) NOT NULL,
+    occurrence_count_at_drafting  INTEGER      NOT NULL,
+    diagnosis                     TEXT,
+    action_type                   VARCHAR(255) NOT NULL,
+    status                        VARCHAR(255) NOT NULL,
+    created_at                    TIMESTAMPTZ  NOT NULL,
+    resolved_at                   TIMESTAMPTZ
+);
+
+-- One row per RuleCandidate.Condition, in order (condition_order backs
+-- @OrderColumn on RuleCandidateEntity.conditions - a candidate's conditions
+-- are evaluated as a flat AND, so order doesn't affect matching, but is
+-- preserved for stable, predictable display).
+CREATE TABLE IF NOT EXISTS rule_candidate_condition (
+    rule_candidate_id VARCHAR(255) NOT NULL REFERENCES rule_candidate (id) ON DELETE CASCADE,
+    condition_order   INTEGER      NOT NULL,
+    field             VARCHAR(255),
+    operator          VARCHAR(255),
+    value             VARCHAR(255),
+    PRIMARY KEY (rule_candidate_id, condition_order)
+);
+
+CREATE TABLE IF NOT EXISTS rule_candidate_action_param (
+    rule_candidate_id VARCHAR(255) NOT NULL REFERENCES rule_candidate (id) ON DELETE CASCADE,
+    param_key         VARCHAR(255) NOT NULL,
+    param_value       VARCHAR(255),
+    PRIMARY KEY (rule_candidate_id, param_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rule_candidate_status ON rule_candidate (status);
+CREATE INDEX IF NOT EXISTS idx_rule_candidate_source_fact ON rule_candidate (source_fact);

@@ -29,10 +29,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * follow-up once there's a real need to review it after the fact rather
  * than watching logs live.
  * <p>
- * Dynamic rule lists start empty on every restart - RuleCandidate
- * persistence is parked (see RuleCandidateStore's Javadoc), so there's
- * nothing to reload here yet. Once that lands, this is the seam a startup
- * hook would populate before the first poll runs.
+ * Dynamic rule lists start empty at construction, but are repopulated
+ * immediately after by RuleCandidateReviewService's @PostConstruct reload
+ * hook, which re-registers every persisted APPROVED_SHADOW/LIVE
+ * RuleCandidate (see RuleCandidateStore/JpaRuleCandidateStore) - so a
+ * promoted rule survives a restart rather than silently going inert.
  * <p>
  * Tracks matched vs. unmatched counts so we can report rule-engine coverage
  * over time - the "92% handled without an LLM call" metric that's the whole

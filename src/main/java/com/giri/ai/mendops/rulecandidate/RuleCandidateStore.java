@@ -6,11 +6,14 @@ import java.util.Optional;
 /**
  * Pure storage for RuleCandidates - deliberately holds no drafting or review
  * logic itself (unlike ApprovalGate, which combines storage and business
- * logic in one class). Whatever ends up drafting candidates and whatever
- * ends up reviewing them should only ever talk to this interface, never an
- * implementation's internals directly - that's what makes swapping in a
- * JPA-backed implementation later (mirroring ApprovalAuditEntity/Repository)
- * a matter of adding one new @Component, not touching every caller.
+ * logic in one class). Whatever drafts candidates (RuleCandidateDraftingService)
+ * or reviews them (RuleCandidateReviewService, RuleCandidateController) only
+ * ever talks to this interface, never an implementation's internals directly.
+ * <p>
+ * Now backed by JpaRuleCandidateStore (mirroring ApprovalAuditEntity/Repository) -
+ * this interface was deliberately designed for that swap in advance (it
+ * originally shipped with only an in-memory implementation), and the swap
+ * needed zero changes to any caller, exactly as intended.
  */
 public interface RuleCandidateStore {
 

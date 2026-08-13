@@ -1,6 +1,7 @@
 package com.giri.ai.mendops.rulecandidate;
 
 import com.giri.ai.mendops.rules.RuleEngine;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,11 +21,17 @@ import java.util.NoSuchElementException;
  * or LIVE (in its live list); PENDING_REVIEW and REJECTED candidates aren't
  * registered anywhere in RuleEngine at all.
  * <p>
+ * reloadIntoRuleEngine() re-registers every persisted APPROVED_SHADOW/LIVE
+ * candidate at startup - now that RuleCandidateStore is JPA-backed
+ * (JpaRuleCandidateStore), a promoted rule needs to come back to life after
+ * a restart, not silently go inert. This is the seam RuleEngine's own
+ * Javadoc previously described as "not yet built."
+ * <p>
  * Explicitly re-saves via the store after every mutation rather than relying
- * on in-memory reference mutation being visible for free - InMemoryRuleCandidateStore
- * doesn't strictly need that today, but a future JPA-backed store would, and
- * this is the seam that's meant to swap in cleanly (see RuleCandidateStore's
- * Javadoc).
+ * on in-memory reference mutation being visible for free - this only
+ * matters now that RuleCandidateStore is genuinely persistent, but the
+ * pattern was already in place before that landed (see RuleCandidateStore's
+ * Javadoc on why).
  */
 @Service
 public class RuleCandidateReviewService {
@@ -37,6 +44,20 @@ public class RuleCandidateReviewService {
     public RuleCandidateReviewService(RuleCandidateStore store, RuleEngine ruleEngine) {
         this.store = store;
         this.ruleEngine = ruleEngine;
+    }
+
+    @PostConstruct
+    public void reloadIntoRuleEngine() {
+        var shadowCandidates = store.findByStatus(RuleCandidate.Status.APPROVED_SHADOW);
+        shadowCandidates.forEach(candidate -> ruleEngine.addShadowRule(new DataDrivenRule(candidate)));
+
+        var liveCandidates = store.findByStatus(RuleCandidate.Status.LIVE);
+        liveCandidates.forEach(candidate -> ruleEngine.addLiveRule(new DataDrivenRule(candidate)));
+
+        if (!shadowCandidates.isEmpty() || !liveCandidates.isEmpty()) {
+            log.info("Reloaded {} shadow and {} live rule candidate(s) from persistence",
+                    shadowCandidates.size(), liveCandidates.size());
+        }
     }
 
     public RuleCandidate get(String id) {
