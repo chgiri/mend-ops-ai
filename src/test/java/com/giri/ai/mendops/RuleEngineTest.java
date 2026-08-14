@@ -4,6 +4,7 @@ import com.giri.ai.mendops.model.RemediationAction;
 import com.giri.ai.mendops.model.SystemState;
 import com.giri.ai.mendops.rules.RemediationRule;
 import com.giri.ai.mendops.rules.RuleEngine;
+import com.giri.ai.mendops.rules.ShadowMatchHistory;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -25,7 +26,7 @@ class RuleEngineTest {
                         "svc", RemediationAction.Source.RULE_ENGINE, Map.of());
             }
         };
-        RuleEngine engine = new RuleEngine(List.of(alwaysMatches));
+        RuleEngine engine = new RuleEngine(List.of(alwaysMatches), new ShadowMatchHistory());
 
         SystemState state = new SystemState(Instant.now(), Map.of(), Map.of(), Map.of());
         var result = engine.evaluate(state);
@@ -44,7 +45,7 @@ class RuleEngineTest {
             public boolean matches(SystemState state) { return false; }
             public RemediationAction actionFor(SystemState state) { return null; }
         };
-        RuleEngine engine = new RuleEngine(List.of(neverMatches));
+        RuleEngine engine = new RuleEngine(List.of(neverMatches), new ShadowMatchHistory());
 
         SystemState state = new SystemState(Instant.now(), Map.of(), Map.of(), Map.of());
         var result = engine.evaluate(state);
