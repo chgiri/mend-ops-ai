@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -88,7 +89,7 @@ public class RuleEngine {
                 RemediationAction action = rule.actionFor(state);
                 log.info("[SHADOW] Rule {} would have matched: {}", rule.id(), action);
                 shadowMatchHistory.record(new ShadowMatchRecord(
-                        rule.id(), Instant.now(), action.diagnosis(),
+                        UUID.randomUUID().toString(), rule.id(), Instant.now(), action.diagnosis(),
                         action.actionType() + " (" + action.targetService() + ")"));
             }
         }

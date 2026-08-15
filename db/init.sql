@@ -77,3 +77,19 @@ CREATE TABLE IF NOT EXISTS rule_candidate_action_param (
 
 CREATE INDEX IF NOT EXISTS idx_rule_candidate_status ON rule_candidate (status);
 CREATE INDEX IF NOT EXISTS idx_rule_candidate_source_fact ON rule_candidate (source_fact);
+
+-- Schema for ShadowMatchEntity - every shadow-rule match, kept in full (no
+-- eviction here; JpaShadowMatchHistory bounds what it QUERIES for display,
+-- not what's stored). No FK to rule_candidate on purpose - shadow-match
+-- history should survive independently of the candidate row's own
+-- lifecycle, the same way approval_audit doesn't FK to anything external
+-- either.
+CREATE TABLE IF NOT EXISTS shadow_match (
+    id             VARCHAR(255) PRIMARY KEY,
+    rule_id        VARCHAR(255) NOT NULL,
+    matched_at     TIMESTAMPTZ  NOT NULL,
+    diagnosis      TEXT,
+    action_summary VARCHAR(255)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_match_rule_id_matched_at ON shadow_match (rule_id, matched_at DESC);

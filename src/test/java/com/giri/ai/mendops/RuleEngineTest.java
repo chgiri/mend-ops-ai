@@ -5,6 +5,7 @@ import com.giri.ai.mendops.model.SystemState;
 import com.giri.ai.mendops.rules.RemediationRule;
 import com.giri.ai.mendops.rules.RuleEngine;
 import com.giri.ai.mendops.rules.ShadowMatchHistory;
+import com.giri.ai.mendops.rules.ShadowMatchRecord;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -14,6 +15,13 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RuleEngineTest {
+
+    private static ShadowMatchHistory noOpShadowMatchHistory() {
+        return new ShadowMatchHistory() {
+            public void record(ShadowMatchRecord record) { }
+            public List<ShadowMatchRecord> forRule(String ruleId) { return List.of(); }
+        };
+    }
 
     @Test
     void matchedRuleIsReturnedAndCounted() {
@@ -26,7 +34,7 @@ class RuleEngineTest {
                         "svc", RemediationAction.Source.RULE_ENGINE, Map.of());
             }
         };
-        RuleEngine engine = new RuleEngine(List.of(alwaysMatches), new ShadowMatchHistory());
+        RuleEngine engine = new RuleEngine(List.of(alwaysMatches), noOpShadowMatchHistory());
 
         SystemState state = new SystemState(Instant.now(), Map.of(), Map.of(), Map.of());
         var result = engine.evaluate(state);
@@ -45,7 +53,7 @@ class RuleEngineTest {
             public boolean matches(SystemState state) { return false; }
             public RemediationAction actionFor(SystemState state) { return null; }
         };
-        RuleEngine engine = new RuleEngine(List.of(neverMatches), new ShadowMatchHistory());
+        RuleEngine engine = new RuleEngine(List.of(neverMatches), noOpShadowMatchHistory());
 
         SystemState state = new SystemState(Instant.now(), Map.of(), Map.of(), Map.of());
         var result = engine.evaluate(state);
