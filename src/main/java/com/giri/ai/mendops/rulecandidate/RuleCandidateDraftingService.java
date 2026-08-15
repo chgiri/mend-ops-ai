@@ -62,12 +62,23 @@ public class RuleCandidateDraftingService {
             given to you - you are NOT deciding that part. Your job is only:
             1. A short diagnosis explaining what this condition means and why it
                warrants a standing rule.
-            2. Which action fits: ADJUST_RETRY_BUDGET (widen retry budget - use when the
-               dependency itself seems fine but calls are failing transiently),
-               REPLAY_DLQ_BATCH (replay dead-lettered messages - use when a backlog
-               built up during an outage that has since cleared), or PAGE_ONCALL (defer
-               to a human every time - use when the right response is genuinely
-               situational and shouldn't be automated).
+            2. Which action fits - constrained by the fact's kind (given to you as
+               "Fact kind" below), because each action's real integration only knows
+               how to target one kind of identifier:
+               - CIRCUIT_BREAKER facts: ADJUST_RETRY_BUDGET (widen retry budget - use
+                 when the dependency itself seems fine but calls are failing
+                 transiently) or PAGE_ONCALL.
+               - DLQ_DEPTH facts: REPLAY_DLQ_BATCH (replay dead-lettered messages - use
+                 when a backlog built up during an outage that has since cleared) or
+                 PAGE_ONCALL.
+               - OUTBOX_LAG facts: PAGE_ONCALL ONLY. There is no real integration for
+                 outbox-publisher backpressure (it is a different subsystem from both
+                 Resilience4j retries and DLQ replay) - never choose ADJUST_RETRY_BUDGET
+                 or REPLAY_DLQ_BATCH for an OUTBOX_LAG fact, even though the general
+                 description of those actions might otherwise sound like a fit.
+               PAGE_ONCALL (defer to a human every time) is always valid regardless of
+               fact kind - use it whenever the right response is genuinely situational,
+               or the fact kind rules out the other two.
             3. One reasonable parameter value for whichever action you choose
                (maxAttempts for ADJUST_RETRY_BUDGET, replayCount for REPLAY_DLQ_BATCH,
                or a pageSummary template for PAGE_ONCALL). A human will review this
@@ -112,10 +123,9 @@ public class RuleCandidateDraftingService {
                 event.fact(), event.occurrenceCount(), properties.recurrenceThreshold());
 
         List<RuleCandidate.Condition> conditions = conditionsFor(fact);
-        RuleCandidateDraft draft = requestDraft(event, conditions);
+        RuleCandidateDraft draft = requestDraft(event, fact, conditions);
 
-        RemediationAction.ActionType actionType = draft.actionType() != null
-                ? draft.actionType() : RemediationAction.ActionType.PAGE_ONCALL;
+        RemediationAction.ActionType actionType = resolveActionType(draft.actionType(), fact.kind());
         Map<String, String> actionParams = actionParamsFor(actionType, fact, draft);
 
         RuleCandidate candidate = new RuleCandidate(
@@ -125,6 +135,38 @@ public class RuleCandidateDraftingService {
         store.save(candidate);
         log.info("Drafted rule candidate {} for '{}': {} -> {}",
                 candidate.id(), event.fact(), actionType, actionParams);
+    }
+
+    /**
+     * The prompt's per-fact-kind constraint (see SYSTEM_PROMPT) is a request,
+     * not a guarantee - LLMs occasionally ignore instructions. This is the
+     * backstop that actually makes the constraint hold regardless: a null
+     * actionType, or one the fact's kind doesn't support, falls back to
+     * PAGE_ONCALL rather than trusting the model's choice outright.
+     * PAGE_ONCALL is always valid for any fact kind, so it's a safe universal
+     * fallback - never REPLAY_DLQ_BATCH or ADJUST_RETRY_BUDGET, since an
+     * unsupported combination is exactly what produces a candidate whose
+     * eventual execution is guaranteed to fail (see OutboxLagRule's Javadoc
+     * for the concrete case this prevents).
+     */
+    private RemediationAction.ActionType resolveActionType(RemediationAction.ActionType requested,
+                                                             AnomalousFact.Kind kind) {
+        if (requested == null) {
+            return RemediationAction.ActionType.PAGE_ONCALL;
+        }
+        boolean valid = switch (kind) {
+            case CIRCUIT_BREAKER -> requested == RemediationAction.ActionType.ADJUST_RETRY_BUDGET
+                    || requested == RemediationAction.ActionType.PAGE_ONCALL;
+            case DLQ_DEPTH -> requested == RemediationAction.ActionType.REPLAY_DLQ_BATCH
+                    || requested == RemediationAction.ActionType.PAGE_ONCALL;
+            case OUTBOX_LAG -> requested == RemediationAction.ActionType.PAGE_ONCALL;
+        };
+        if (!valid) {
+            log.warn("LLM drafted {} for a {} fact, which has no real integration for that combination "
+                    + "- overriding to PAGE_ONCALL", requested, kind);
+            return RemediationAction.ActionType.PAGE_ONCALL;
+        }
+        return requested;
     }
 
     private List<RuleCandidate.Condition> conditionsFor(AnomalousFact fact) {
@@ -140,14 +182,16 @@ public class RuleCandidateDraftingService {
         };
     }
 
-    private RuleCandidateDraft requestDraft(IncidentResolvedEvent event, List<RuleCandidate.Condition> conditions) {
+    private RuleCandidateDraft requestDraft(IncidentResolvedEvent event, AnomalousFact fact,
+                                             List<RuleCandidate.Condition> conditions) {
         String userMessage = """
                 Recurring condition: %s
+                Fact kind: %s
                 Occurrences so far: %d
                 Derived rule condition(s): %s
 
                 Draft a proposal for this.
-                """.formatted(event.fact(), event.occurrenceCount(), conditions);
+                """.formatted(event.fact(), fact.kind(), event.occurrenceCount(), conditions);
 
         return chatClient.prompt()
                 .user(userMessage)

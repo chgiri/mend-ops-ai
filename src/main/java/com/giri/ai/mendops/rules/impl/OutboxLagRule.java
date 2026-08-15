@@ -12,16 +12,29 @@ import java.util.Map;
  * Known pattern: outbox publish lag climbing for a service while its
  * circuit breaker is still CLOSED - i.e. the downstream dependency is fine,
  * but the outbox publisher itself is falling behind (e.g. Kafka producer
- * backpressure). Low-risk, well-understood: widen the retry budget rather
- * than paging anyone.
+ * backpressure).
+ * <p>
+ * Pages rather than auto-remediating. An earlier version of this rule used
+ * ADJUST_RETRY_BUDGET, on the assumption that "widen the retry budget" was a
+ * low-risk fix - but the only real ADJUST_RETRY_BUDGET integration
+ * (RetryBudgetAdminClient) tunes oms-main's Resilience4j HTTP retry config
+ * for calls TO product-service/customer-service (targets: "productClient"/
+ * "customerClient"). That's a completely different subsystem from outbox
+ * publishing to Kafka - mostLaggingService here is an outbox source name
+ * (e.g. "shipment-service"), which is never a valid Resilience4j instance
+ * name. Executing ADJUST_RETRY_BUDGET for this diagnosis wouldn't just fail
+ * to help - even if the naming were fixed, it would silently tune an
+ * unrelated HTTP client while doing nothing about the actual outbox lag. No
+ * real remediation for outbox-publisher backpressure exists yet (would mean
+ * a new integration - tuning Kafka producer retry/backoff or the outbox
+ * poll batch size, neither of which RetryBudgetAdminClient does) - PAGE_ONCALL
+ * is the honest choice until one does. See RuleCandidateDraftingService's
+ * system prompt for the same constraint applied to the LLM-drafted path -
+ * an OUTBOX_LAG-kind fact should never be drafted as ADJUST_RETRY_BUDGET
+ * either, for the identical reason.
  */
 @Component
 public class OutboxLagRule implements RemediationRule {
-
-    // Matches the same default RuleCandidateDraftingService falls back to when the LLM
-    // omits a value - this rule has no per-instance human review to draw a tuned value
-    // from, so a shared, known-reasonable default is the honest choice here.
-    private static final int DEFAULT_MAX_ATTEMPTS = 5;
 
     @Override
     public String id() {
@@ -52,14 +65,17 @@ public class OutboxLagRule implements RemediationRule {
                 .map(Map.Entry::getKey)
                 .orElse("unknown");
 
+        String diagnosis = "Outbox publish lag on " + mostLaggingService + " exceeds "
+                + AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS
+                + "s with no open circuit breaker - likely producer backpressure. No automated "
+                + "remediation exists for outbox-publisher backpressure yet - needs a human look.";
+
         return new RemediationAction(
-                "Outbox publish lag on " + mostLaggingService + " exceeds "
-                        + AnomalyThresholds.OUTBOX_LAG_THRESHOLD_SECONDS
-                        + "s with no open circuit breaker - likely producer backpressure.",
-                RemediationAction.ActionType.ADJUST_RETRY_BUDGET,
+                diagnosis,
+                RemediationAction.ActionType.PAGE_ONCALL,
                 mostLaggingService,
                 RemediationAction.Source.RULE_ENGINE,
-                Map.of("serviceName", mostLaggingService, "maxAttempts", String.valueOf(DEFAULT_MAX_ATTEMPTS))
+                Map.of("summary", diagnosis)
         );
     }
 }

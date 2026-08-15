@@ -79,7 +79,9 @@ RuleCandidate saved as PENDING_REVIEW (GET /api/v1/agent/rule-candidates)
         v
 Human: POST .../approve -> APPROVED_SHADOW
   - registered with RuleEngine as a shadow rule: evaluated on every real
-    poll, matches are logged ("[SHADOW] would have matched"), never act
+    poll, matches are logged ("[SHADOW] would have matched") AND recorded to
+    ShadowMatchHistory - GET .../rule-candidates/{id}/shadow-history to
+    review hits after the fact instead of only watching logs live
         |
         v
 Human: POST .../promote -> LIVE (always a separate, explicit click -
@@ -93,12 +95,26 @@ Candidates are held as **data** (a list of field/operator/value conditions
 plus an action type + params), not generated code - an LLM-authored Java
 class compiled/loaded at runtime would be arbitrary code execution from
 model output. `DataDrivenRule` is the one hand-written interpreter for all
-candidates.
+candidates. `RuleCandidateStore` is JPA-backed (`JpaRuleCandidateStore`),
+mirroring `ApprovalGate`'s crash-safe pattern - `RuleCandidateReviewService`
+reloads every `APPROVED_SHADOW`/`LIVE` row back into `RuleEngine` at startup.
 
-`RuleCandidateStore` is in-memory only for now (persistence parked, same as
-`ApprovalGate` originally was) - but deliberately kept as a narrow storage
-interface separate from drafting/review logic, so a JPA-backed
-implementation is a drop-in swap later with no other code touched.
+**Which action fits is constrained by the fact's kind, not left fully open.**
+Each action's real integration only knows how to target one kind of
+identifier - `ADJUST_RETRY_BUDGET` needs a Resilience4j instance name
+(`productClient`/`customerClient`), `REPLAY_DLQ_BATCH` needs a Kafka DLQ
+topic name. A `CIRCUIT_BREAKER` fact's target is the former; a `DLQ_DEPTH`
+fact's target is the latter; an `OUTBOX_LAG` fact's target is neither (it's
+an outbox source name, e.g. `shipment-service`) - so `OUTBOX_LAG` facts can
+only ever produce `PAGE_ONCALL`. This is enforced twice: the system prompt
+tells the LLM the valid action set per fact kind, and
+`RuleCandidateDraftingService.resolveActionType()` overrides to `PAGE_ONCALL`
+regardless of what the LLM returns if it picks an invalid combination anyway
+- prompt compliance is a request, not a guarantee, and a mismatched
+combination is exactly what produces a candidate that's guaranteed to fail
+once it goes `LIVE` (see `OutboxLagRule`'s Javadoc for the concrete case this
+was written to prevent - an earlier version of that rule had exactly this
+bug).
 
 ## Package layout
 
@@ -188,17 +204,8 @@ survive a restart, since it was never durably recorded in the first place.
 
 ## Not yet built / open items
 
-- **Persistent `RuleCandidateStore`.** In-memory only - the seam
-  (`RuleCandidateStore` interface, `RuleCandidate` held as plain data with no
-  captured `Callable`) is deliberately designed to make this an easy add
-  later, mirroring how `ApprovalGate` got JPA persistence.
-- **Shadow-match history.** Currently a log line only
-  (`[SHADOW] Rule ... would have matched: ...`) - no endpoint to review
-  shadow hits after the fact; you have to watch logs live.
 - **No revert/expiry for a "temporarily" widened retry budget.** Left as-is
   forever once approved - a real gap if this ever runs unattended.
-- **DLQ depth is an approximation** (raw partition end-offset sum, not true
-  unconsumed message count) - documented in `DlqDepthPoller`, not fixed.
 - **Paging-bias question, unresolved.** `EscalationService`'s system prompt
   tells the LLM to prefer paging when a situation is ambiguous or could
   involve data loss - real testing suggested it may default to paging more
