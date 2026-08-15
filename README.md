@@ -126,17 +126,24 @@ bug).
   (shared constants - lag/DLQ thresholds - used by rules, `HealthyStateRule`,
   and `IncidentTracker` alike, so their definitions of "anomalous" can't
   silently drift apart), `AnomalousFact` (the single source of truth for the
-  anomalous-fact string format), and `rules/impl/` (`ProductServiceCircuitOpenRule`,
+  anomalous-fact string format), `ShadowMatchHistory`/`JpaShadowMatchHistory`
+  (every shadow-rule match, persisted in full - the display endpoint bounds
+  what it queries, not what's stored, so old shadow history is never
+  destroyed), and `rules/impl/` (`ProductServiceCircuitOpenRule`,
   `OutboxLagRule`, `HealthyStateRule`).
 - `incident/` - `IncidentTracker` (per-fact recurrence tracking across poll
   cycles, publishes `IncidentResolvedEvent`), `OpenIncident`.
 - `rulecandidate/` - the rule-promotion flow: `RuleCandidate` (data model),
-  `RuleCandidateStore`/`InMemoryRuleCandidateStore`, `RuleCandidateDraftingService`
+  `RuleCandidateStore`/`JpaRuleCandidateStore`, `RuleCandidateDraftingService`
   (the `@EventListener`), `RuleCandidateReviewService` (status transitions +
   `RuleEngine` registration), `DataDrivenRule`.
 - `telemetry/` - real ingestion: `CircuitBreakerPoller` (oms-main's
   `/actuator/circuitbreakers`), `OutboxLagPoller` (JDBC, schema-qualified per
-  source), `DlqDepthPoller` (long-lived Kafka `AdminClient`),
+  source), `DlqDepthPoller` (long-lived Kafka `AdminClient` - reports TRUE
+  unconsumed depth per topic, end offset minus `DlqReplayService`'s own
+  committed offset for that same consumer group, not a raw offset sum -
+  DLQ topics have no natural continuous consumer in this system, so
+  "replayed" is exactly what "consumed" means here),
   `OutboxDataSourceRegistry`, `OmsTelemetryProperties`, `SystemStatePoller`
   (the `@Scheduled` job tying it all together, and where `IncidentTracker`
   observes each real poll).
