@@ -211,15 +211,18 @@ survive a restart, since it was never durably recorded in the first place.
 
 ## Not yet built / open items
 
-- **No automatic revert/expiry for a "temporarily" widened retry budget** -
-  a human still has to notice and act. What's now built:
+- **No automatic revert for a "temporarily" widened retry budget** - a human
+  still has to act, but now gets told to. What's built:
   `GET /api/v1/agent/retry-budgets/status` compares each Resilience4j
-  instance's most recently APPROVED `maxAttempts`
-  (`RetryBudgetStatusService`, derived from existing `ApprovalAuditRepository`
-  history - no new persistence) against a configured steady-state default
-  (`mendops.remediation.retry-budget.default-max-attempts.*`) and flags
-  `nonDefault: true` when they differ. No scheduled alert/paging wired to
-  this yet, and no actual revert - it's visibility, not remediation.
+  instance's most recently APPROVED `maxAttempts` (`RetryBudgetStatusService`,
+  derived from existing `ApprovalAuditRepository` history - no new
+  persistence) against a configured steady-state default
+  (`mendops.remediation.retry-budget.default-max-attempts.*`), and
+  `RetryBudgetDriftMonitor` pages + logs a `WARN` every
+  `mendops.remediation.retry-budget.drift-alert-interval-ms` (default 12h)
+  for as long as any budget stays non-default - no separate state needed to
+  track "already alerted", since the check interval itself is the alert
+  cadence. Still no actual revert - it's alerting, not remediation.
 - **Paging-bias question, unresolved.** `EscalationService`'s system prompt
   tells the LLM to prefer paging when a situation is ambiguous or could
   involve data loss - real testing suggested it may default to paging more
