@@ -2,14 +2,22 @@ package com.giri.ai.mendops.telemetry;
 
 import com.giri.ai.mendops.remediation.RemediationProperties;
 import jakarta.annotation.PreDestroy;
-import org.apache.kafka.clients.admin.*;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -132,15 +140,10 @@ public class DlqDepthPoller {
             return Map.of();
         }
         try {
-            // 1. Create a specification defining which partitions to fetch for this group
             ListConsumerGroupOffsetsSpec spec = new ListConsumerGroupOffsetsSpec().topicPartitions(partitions);
-
-            // 2. Map your group ID to the specification and pass it to the updated method
             return adminClient.listConsumerGroupOffsets(Collections.singletonMap(dlqConsumerGroupId, spec))
-                    .partitionsToOffsetAndMetadata(dlqConsumerGroupId) // Specify the group ID here too
+                    .partitionsToOffsetAndMetadata(dlqConsumerGroupId)
                     .get(10, TimeUnit.SECONDS);
-
-
         } catch (Exception e) {
             log.debug("No committed offsets found for group {}: {}", dlqConsumerGroupId, e.getMessage());
             return Map.of();
