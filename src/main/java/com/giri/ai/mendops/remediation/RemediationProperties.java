@@ -48,8 +48,19 @@ public record RemediationProperties(
      * {@code POST {adminBaseUrl}/actuator/retrybudget} with a JSON body
      * {@code {"clientName": "...", "maxAttempts": N}}. Keyed by the same
      * targetService name RemediationTools receives.
+     *
+     * @param defaultMaxAttempts the NORMAL (steady-state, outside any incident)
+     *                           maxAttempts for each instance name - what
+     *                           RetryBudgetStatusService compares the most
+     *                           recently approved value against to flag a
+     *                           budget that's still widened from an old
+     *                           incident and was never put back. This is this
+     *                           app's own record of "what normal looks like",
+     *                           not read from oms-main - if oms-main's actual
+     *                           default ever changes, update it here too or
+     *                           this will flag a false positive.
      */
-    public record RetryBudget(Map<String, String> adminBaseUrl) {
+    public record RetryBudget(Map<String, String> adminBaseUrl, Map<String, Integer> defaultMaxAttempts) {
     }
 
     /**
