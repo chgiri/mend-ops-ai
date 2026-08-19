@@ -62,7 +62,8 @@ public class SystemStatePoller {
 
         incidentTracker.observe(state);
 
-        String result = orchestrator.handle(state);
-        log.info("Agent evaluation result: {}", result);
+        AgentOrchestrator.AgentDecision decision = orchestrator.handle(state);
+        log.info("Agent evaluation result: source={} actions={} - {}",
+                decision.source(), decision.actionsInvoked(), decision.summary());
     }
 }

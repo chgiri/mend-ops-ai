@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -49,20 +50,22 @@ public class AgentOrchestrator {
         this.approvalGate = approvalGate;
     }
 
-    public String handle(SystemState state) {
+    public AgentDecision handle(SystemState state) {
         Optional<RemediationAction> ruleMatch = ruleEngine.evaluate(state);
 
         if (ruleMatch.isPresent()) {
             RemediationAction action = ruleMatch.get();
             log.info("Resolved by rule engine: {}", action);
             String dispatchResult = dispatch(action);
-            return "[rule-engine] " + action.diagnosis() + " -> " + action.actionType()
+            String summary = action.diagnosis() + " -> " + action.actionType()
                     + " (" + action.targetService() + "). " + dispatchResult;
+            return new AgentDecision("RULE_ENGINE", List.of(action.actionType()), summary);
         }
 
         log.info("No rule matched - escalating to LLM. Coverage so far: {}%",
                 Math.round(ruleEngine.coverageRatio() * 100));
-        return "[llm-escalation] " + escalationService.diagnoseAndAct(state);
+        EscalationService.EscalationOutcome outcome = escalationService.diagnoseAndAct(state);
+        return new AgentDecision("LLM_ESCALATION", outcome.invokedActions(), outcome.diagnosis());
     }
 
     private String dispatch(RemediationAction action) {
@@ -78,5 +81,25 @@ public class AgentOrchestrator {
             }
             case NO_ACTION -> "Nothing to do.";
         };
+    }
+
+    /**
+     * @param source          "RULE_ENGINE" or "LLM_ESCALATION" - a plain String rather
+     *                        than reusing RemediationAction.Source so this doesn't
+     *                        imply a 1:1 mapping that isn't quite true (a rule match
+     *                        always yields exactly one action; LLM escalation can
+     *                        yield zero, one, or multiple - see actionsInvoked).
+     * @param actionsInvoked  what actually happened, in order. For a rule match this
+     *                        is always a singleton list (deterministic). For LLM
+     *                        escalation this is ground truth from RemediationTools'
+     *                        invocation tracking (see EscalationService), NOT parsed
+     *                        from the summary text - empty if the model responded
+     *                        without calling any tool at all.
+     * @param summary         human-readable text for display/logging - do not try to
+     *                        parse this to determine which action fired; use
+     *                        actionsInvoked instead. This is exactly the field this
+     *                        record exists to make unnecessary to parse.
+     */
+    public record AgentDecision(String source, List<RemediationAction.ActionType> actionsInvoked, String summary) {
     }
 }

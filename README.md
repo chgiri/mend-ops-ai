@@ -223,12 +223,22 @@ survive a restart, since it was never durably recorded in the first place.
   for as long as any budget stays non-default - no separate state needed to
   track "already alerted", since the check interval itself is the alert
   cadence. Still no actual revert - it's alerting, not remediation.
-- **Paging-bias question, unresolved.** `EscalationService`'s system prompt
-  tells the LLM to prefer paging when a situation is ambiguous or could
-  involve data loss - real testing suggested it may default to paging more
-  often than actually exercising `adjustRetryBudget`/`replayDlqBatch`. Never
-  conclusively confirmed either way; worth deliberately testing before
-  assuming the gated-action paths get meaningfully exercised in practice.
+- **Paging-bias question - measurable now, not yet actually measured.**
+  `EscalationService`'s system prompt tells the LLM to prefer paging when a
+  situation is ambiguous or could involve data loss - real testing suggested
+  it may default to paging more often than actually exercising
+  `adjustRetryBudget`/`replayDlqBatch`, but this was never conclusively
+  confirmed because there was no reliable way to tell which action fired
+  (the LLM path only returned prose). Fixed: `AgentOrchestrator.handle()`
+  now returns a structured `AgentDecision` (`source`, `actionsInvoked`,
+  `summary`) instead of a plain `String` - `RemediationTools` tracks which
+  `@Tool` method actually ran (`ThreadLocal`, reset per call in
+  `EscalationService.diagnoseAndAct()`) rather than trying to parse it back
+  out of the model's paraphrased response. `scripts/measure-paging-bias.sh`
+  runs each LLM-escalation demo scenario N times and tabulates the real
+  distribution - each run is a real Gemini call, so this hasn't been run for
+  a real N yet. Run it and see what the numbers actually say before
+  concluding either way.
 - **Everything built in the rule-promotion flow and the execution-gap fix is
   untested end-to-end** - each piece was verified in isolation or by code
   review, but the full loop (incident recurs -> candidate drafted -> shadow
@@ -277,6 +287,14 @@ curl -X POST http://localhost:8099/api/v1/agent/rule-candidates/<id>/approve  # 
 curl -X POST http://localhost:8099/api/v1/agent/rule-candidates/<id>/promote # -> live
 curl -X POST http://localhost:8099/api/v1/agent/rule-candidates/<id>/reject
 ```
+
+`/evaluate` and every `/demo/*` endpoint return a structured `AgentDecision`
+(`{"source": "...", "actionsInvoked": [...], "summary": "..."}`), not plain
+text - `actionsInvoked` is ground truth from `RemediationTools`' own
+invocation tracking, not parsed from `summary`. Run
+`scripts/measure-paging-bias.sh [N]` to tabulate the real action
+distribution across the three LLM-escalation demo scenarios instead of
+reading responses by hand.
 
 Which action the LLM picks for the two "no rule matches" demos is a model decision, not
 guaranteed - but breaker state plus whether there's a backlog is the strongest signal for it:

@@ -1,8 +1,11 @@
 package com.giri.ai.mendops.agent;
 
+import com.giri.ai.mendops.model.RemediationAction;
 import com.giri.ai.mendops.model.SystemState;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * The expensive path: called only when RuleEngine finds no matching rule
@@ -54,12 +57,14 @@ public class EscalationService {
             """;
 
     private final ChatClient chatClient;
+    private final RemediationTools remediationTools;
 
     public EscalationService(ChatClient.Builder chatClientBuilder, RemediationTools remediationTools) {
         this.chatClient = chatClientBuilder
                 .defaultSystem(SYSTEM_PROMPT)
                 .defaultTools(remediationTools)
                 .build();
+        this.remediationTools = remediationTools;
     }
 
     /**
@@ -70,8 +75,18 @@ public class EscalationService {
      * method it decides on - safe because replayDlqBatch/adjustRetryBudget are
      * approval-gated at the tool-implementation level (see RemediationTools), not
      * because anything here restricts which tools the model can reach.
+     * <p>
+     * Returns which tool(s) actually fired (invokedActions) alongside the model's
+     * prose (diagnosis) - resolveActionType-style prompt guidance is a request, not
+     * a guarantee, and the diagnosis text alone isn't reliably parseable back into
+     * "which action happened" (the model paraphrases). invokedActions comes from
+     * RemediationTools' own ThreadLocal tracking, i.e. ground truth from the tool
+     * methods themselves - not from the model's description of what it did. This is
+     * what makes questions like "does the model default to pageOncall more than it
+     * should" actually answerable instead of a guess from reading logs by hand -
+     * see README's "Paging-bias question" for why this was added.
      */
-    public String diagnoseAndAct(SystemState state) {
+    public EscalationOutcome diagnoseAndAct(SystemState state) {
         String userMessage = """
                 Current system state (captured at %s):
                 Circuit breakers: %s
@@ -86,9 +101,25 @@ public class EscalationService {
                 state.dlqDepth()
         );
 
-        return chatClient.prompt()
+        remediationTools.resetInvokedActions();
+        String diagnosis = chatClient.prompt()
                 .user(userMessage)
                 .call()
                 .content();
+        List<RemediationAction.ActionType> invokedActions = remediationTools.invokedActions();
+
+        return new EscalationOutcome(diagnosis, invokedActions);
+    }
+
+    /**
+     * @param diagnosis      the model's final natural-language response - for display,
+     *                       not for programmatically determining which action fired.
+     * @param invokedActions which @Tool method(s) actually ran, in call order - empty
+     *                       if the model responded without calling any tool at all
+     *                       (a real possibility worth surfacing, not just 0/1/many
+     *                       collapsed into a boolean), more than one entry if the
+     *                       model made multiple tool calls in one turn.
+     */
+    public record EscalationOutcome(String diagnosis, List<RemediationAction.ActionType> invokedActions) {
     }
 }

@@ -27,13 +27,13 @@ public class AgentController {
     }
 
     @PostMapping("/evaluate")
-    public String evaluate(@RequestBody SystemState state) {
+    public AgentOrchestrator.AgentDecision evaluate(@RequestBody SystemState state) {
         return orchestrator.handle(state);
     }
 
     /** Convenience endpoint: known pattern, should resolve via the rule engine, no LLM call. */
     @PostMapping("/demo/product-circuit-open")
-    public String demoProductCircuitOpen() {
+    public AgentOrchestrator.AgentDecision demoProductCircuitOpen() {
         SystemState state = new SystemState(
                 Instant.now(),
                 Map.of("productClient", SystemState.CircuitBreakerState.OPEN),
@@ -45,7 +45,7 @@ public class AgentController {
 
     /** Convenience endpoint: unusual combination, should have no rule match, forces LLM escalation. */
     @PostMapping("/demo/unknown-pattern")
-    public String demoUnknownPattern() {
+    public AgentOrchestrator.AgentDecision demoUnknownPattern() {
         SystemState state = new SystemState(
                 Instant.now(),
                 Map.of("customerClient", SystemState.CircuitBreakerState.HALF_OPEN),
@@ -64,7 +64,7 @@ public class AgentController {
      * breaker (a live, unresolved signal) and so tends to escalate to pageOncall instead.
      */
     @PostMapping("/demo/dlq-backlog-recovered")
-    public String demoDlqBacklogRecovered() {
+    public AgentOrchestrator.AgentDecision demoDlqBacklogRecovered() {
         SystemState state = new SystemState(
                 Instant.now(),
                 Map.of("customerClient", SystemState.CircuitBreakerState.CLOSED,
@@ -87,7 +87,7 @@ public class AgentController {
      * shaped for adjustRetryBudget specifically.
      */
     @PostMapping("/demo/transient-backpressure")
-    public String demoTransientBackpressure() {
+    public AgentOrchestrator.AgentDecision demoTransientBackpressure() {
         SystemState state = new SystemState(
                 Instant.now(),
                 Map.of("productClient", SystemState.CircuitBreakerState.HALF_OPEN),

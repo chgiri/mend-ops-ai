@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -48,6 +50,16 @@ public class RemediationTools {
     private final PagingNotifier pagingNotifier;
     private final RemediationProperties remediationProperties;
 
+    // ThreadLocal, not a plain field: Spring AI's tool-calling loop runs synchronously on the
+    // calling thread, so this correctly scopes "which tools fired" to one diagnoseAndAct() call
+    // even under concurrent requests - a plain field would leak invocations across threads.
+    // Exists purely to make EscalationService's LLM-escalation path measurable (see its Javadoc
+    // and AgentOrchestrator.AgentDecision) - the model's final text response is a paraphrase,
+    // not a reliable signal of which @Tool method actually ran; this records ground truth
+    // directly from the methods themselves instead of trying to parse it back out of prose.
+    private final ThreadLocal<List<RemediationAction.ActionType>> invokedActions =
+            ThreadLocal.withInitial(ArrayList::new);
+
     public RemediationTools(ApprovalGate approvalGate, PagingNotifier pagingNotifier,
                              RemediationProperties remediationProperties) {
         this.approvalGate = approvalGate;
@@ -55,11 +67,22 @@ public class RemediationTools {
         this.remediationProperties = remediationProperties;
     }
 
+    /** Call before invoking the model, so a previous call's recorded tools don't leak into this one. */
+    public void resetInvokedActions() {
+        invokedActions.get().clear();
+    }
+
+    /** What actually ran during the most recent call on this thread since resetInvokedActions(). */
+    public List<RemediationAction.ActionType> invokedActions() {
+        return List.copyOf(invokedActions.get());
+    }
+
     @Tool(description = "Propose replaying a batch of messages from a dead-letter queue topic "
             + "back onto its source topic. This does NOT execute immediately - it is queued for "
             + "human approval and only runs once approved. Use when messages failed processing "
             + "but the underlying cause has since been resolved.")
     public String replayDlqBatch(String topic, int count) {
+        invokedActions.get().add(RemediationAction.ActionType.REPLAY_DLQ_BATCH);
         String description = "Replay " + count + " messages from " + topic;
         String id = approvalGate.propose(
                 RemediationAction.ActionType.REPLAY_DLQ_BATCH,
@@ -78,6 +101,7 @@ public class RemediationTools {
             + "\"customerClient\") - it is case-sensitive and is not a general service label like "
             + "\"product-service\".")
     public String adjustRetryBudget(String serviceName, int maxAttempts) {
+        invokedActions.get().add(RemediationAction.ActionType.ADJUST_RETRY_BUDGET);
         Set<String> knownServiceNames = (remediationProperties.retryBudget() == null
                 || remediationProperties.retryBudget().adminBaseUrl() == null)
                 ? Set.of()
@@ -111,6 +135,7 @@ public class RemediationTools {
             + "approval. Use for anything outside the agent's confidence or authority to "
             + "auto-remediate.")
     public String pageOncall(String summary) {
+        invokedActions.get().add(RemediationAction.ActionType.PAGE_ONCALL);
         log.info("[TOOL] pageOncall summary={}", summary);
         pagingNotifier.page(summary);
         return "Paged on-call: " + summary;
